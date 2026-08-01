@@ -1,7 +1,7 @@
 {
     "version":            "1",
     "project_name":       "esp32s3_rhythmSleep_espidf",
-    "project_version":    "04a4515-dirty",
+    "project_version":    "4a93d4e-dirty",
     "project_path":       "/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf",
     "idf_path":           "/home/izaan/esp/esp-idf",
     "build_dir":          "/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build",
@@ -815,7 +815,7 @@
             "dir": "/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/main",
             "type": "LIBRARY",
             "lib": "__idf_main",
-            "reqs": [ "driver", "esp_adc", "esp_lcd", "fatfs", "sdmmc", "espressif__usb_host_uac" ],
+            "reqs": [ "driver", "fatfs", "sdmmc", "esp_lcd", "usb", "espressif__usb_host_uac", "esp_timer", "esp_adc" ],
             "priv_reqs": [ "espressif__usb_host_uac" ],
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__usb_host_uac" ],

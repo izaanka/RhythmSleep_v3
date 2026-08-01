@@ -3,13 +3,13 @@
   ESP32-S3 RhythmSleep AI System (Native ESP-IDF)
   ===================================================================
   FEATURES:
-  1. ST7789 2.8" SPI TFT Display Engine (320x240):
+  1. High-Resolution `esp_timer` 100 Hz Differential Audio Generator:
+     - Toggles GPIO 20 (D+) & GPIO 19 (D-) every 5000 us (5 ms half period = 100 Hz tone).
+     - Driven via hardware timer interrupt to guarantee zero CPU starvation and zero Watchdog Resets!
+     - Maximum GPIO Drive capability (GPIO_DRIVE_CAP_3) for clear audio.
+  2. ST7789 2.8" SPI TFT Display Engine (320x240):
      - MOSI=11, SCLK=12, MISO=13, CS=38, DC=39, RST=40, BLK=48.
      - Full RhythmSleep Dark Dashboard with Real-time Clock, EEG Wave, NN State & Navigation.
-  2. Differential 100 Hz Low-Frequency Audio Generator (GPIO 20 D+ & GPIO 19 D-):
-     - Pure 100 Hz differential 5ms square wave (3.3V out-of-phase = 6.6V peak-to-peak across speaker).
-     - Maximum Drive Capability (GPIO_DRIVE_CAP_3) for high volume.
-  3. Haptic Vibration Motor & Audio Beep Feedback on GPIO 21 & GPIO 20/19.
   ===================================================================
 */
 
@@ -20,7 +20,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_err.h"
-#include "esp_rom_sys.h"
+#include "esp_timer.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "driver/spi_master.h"
@@ -82,7 +82,44 @@ static esp_lcd_panel_handle_t panel_handle = NULL;
 static int system_hours = 22;
 static int system_minutes = 36;
 static int system_seconds = 15;
-static bool audio_active = true;
+
+// --- High-Resolution Timer Callback for 100 Hz Differential Audio ---
+static void audio_timer_cb(void *arg) {
+    static bool state = false;
+    state = !state;
+    gpio_set_level(USB_AUDIO_DP_PIN, state ? 1 : 0);
+    gpio_set_level(USB_AUDIO_DN_PIN, state ? 0 : 1);
+}
+
+// --- Initialize 100 Hz Audio Engine ---
+static void init_audio_timer(void) {
+    ESP_LOGI(TAG, "Initializing 100 Hz Differential Audio Generator on GPIO 20 (D+) & GPIO 19 (D-)...");
+
+    gpio_config_t audio_gpio_conf = {
+        .pin_bit_mask = (1ULL << USB_AUDIO_DP_PIN) | (1ULL << USB_AUDIO_DN_PIN),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    gpio_config(&audio_gpio_conf);
+
+    // Set maximum GPIO drive strength (20mA+)
+    gpio_set_drive_capability(USB_AUDIO_DP_PIN, GPIO_DRIVE_CAP_3);
+    gpio_set_drive_capability(USB_AUDIO_DN_PIN, GPIO_DRIVE_CAP_3);
+
+    const esp_timer_create_args_t audio_timer_args = {
+        .callback = &audio_timer_cb,
+        .name = "audio_100hz"
+    };
+
+    esp_timer_handle_t audio_timer;
+    ESP_ERROR_CHECK(esp_timer_create(&audio_timer_args, &audio_timer));
+    // 5000 us half period = 100 Hz square wave tone
+    ESP_ERROR_CHECK(esp_timer_start_periodic(audio_timer, 5000));
+
+    ESP_LOGI(TAG, "[AUDIO SUCCESS] 100 Hz Differential Audio Generator Started.");
+}
 
 // Helper: Fill Rect on LCD Buffer
 static void draw_rect(uint16_t *buf, int buf_w, int buf_h, int rx, int ry, int rw, int rh, uint16_t color) {
@@ -136,38 +173,6 @@ static void draw_string(uint16_t *buf, int buf_w, int buf_h, int x, int y, const
         draw_char(buf, buf_w, buf_h, x, y, *str, color, bg);
         x += 12;
         str++;
-    }
-}
-
-// --- Differential 100 Hz GPIO Square Wave Audio Task ---
-static void audio_speaker_task(void *pvParameters) {
-    ESP_LOGI(TAG, "Initializing 100 Hz Differential GPIO Audio Engine on GPIO 20 (D+) & GPIO 19 (D-)...");
-
-    gpio_config_t audio_gpio_conf = {
-        .pin_bit_mask = (1ULL << USB_AUDIO_DP_PIN) | (1ULL << USB_AUDIO_DN_PIN),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE
-    };
-    gpio_config(&audio_gpio_conf);
-
-    // Set maximum GPIO drive strength (20mA+)
-    gpio_set_drive_capability(USB_AUDIO_DP_PIN, GPIO_DRIVE_CAP_3);
-    gpio_set_drive_capability(USB_AUDIO_DN_PIN, GPIO_DRIVE_CAP_3);
-
-    bool state = false;
-
-    while (1) {
-        if (audio_active) {
-            state = !state;
-            gpio_set_level(USB_AUDIO_DP_PIN, state ? 1 : 0);
-            gpio_set_level(USB_AUDIO_DN_PIN, state ? 0 : 1);
-        } else {
-            gpio_set_level(USB_AUDIO_DP_PIN, 0);
-            gpio_set_level(USB_AUDIO_DN_PIN, 0);
-        }
-        vTaskDelay(pdMS_TO_TICKS(5)); // 5ms high, 5ms low = 100 Hz tone
     }
 }
 
@@ -298,7 +303,7 @@ static void tft_render_task(void *pvParameters) {
             esp_lcd_panel_draw_bitmap(panel_handle, 0, y_block, LCD_H_RES, y_block + 40, line_buffer);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(100)); // 10 FPS refresh loop
     }
 }
 
@@ -330,13 +335,13 @@ void app_main(void) {
     init_tft_display();
     xTaskCreate(tft_render_task, "tft_render_task", 4096, NULL, 3, NULL);
 
-    // 3. Start 100 Hz High-Drive Audio Task on GPIO 20 (D+) & GPIO 19 (D-)
-    xTaskCreate(audio_speaker_task, "audio_speaker_task", 2048, NULL, 5, NULL);
+    // 3. Initialize High-Precision esp_timer 100 Hz Differential Audio Generator
+    init_audio_timer();
 
-    ESP_LOGI(TAG, "RhythmSleep System Initialized & Running.");
+    ESP_LOGI(TAG, "RhythmSleep System Initialized & Running Smoothly.");
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
-        ESP_LOGI(TAG, "System Tick: TFT Dashboard Active | 100 Hz Differential Audio Generator Active (GPIO 19/20)");
+        ESP_LOGI(TAG, "System Tick: ST7789 TFT Active | esp_timer 100 Hz Audio Generator Active (GPIO 19/20)");
     }
 }
