@@ -2,13 +2,14 @@
   ===================================================================
   ESP32-S3 RhythmSleep AI System (Native ESP-IDF)
   ===================================================================
-  ST7789 2.8" TFT DISPLAY (320x240):
-  - MOSI: GPIO 11, SCLK: GPIO 12, MISO: GPIO 13, CS: GPIO 38, DC: GPIO 39, RST: GPIO 40, BLK: GPIO 48
-  - Full-featured sleek RhythmSleep UI dashboard (Header, Real-time Clock, EEG Waveform, Sleep State, Audio Indicator)
-
-  DUAL AUDIO ENGINE (GPIO 20 D+ & GPIO 19 D-):
-  - High-Drive LEDC PWM Differential 100 Hz Audio Generator (Max Drive Cap 3)
-  - USB Host UAC 1.0 Audio Stream Task (espressif/usb_host_uac)
+  FEATURES:
+  1. ST7789 2.8" SPI TFT Display Engine (320x240):
+     - MOSI=11, SCLK=12, MISO=13, CS=38, DC=39, RST=40, BLK=48.
+     - Full RhythmSleep Dark Dashboard with Real-time Clock, EEG Wave, NN State & Navigation.
+  2. Differential 100 Hz Low-Frequency Audio Generator (GPIO 20 D+ & GPIO 19 D-):
+     - Pure 100 Hz differential 5ms square wave (3.3V out-of-phase = 6.6V peak-to-peak across speaker).
+     - Maximum Drive Capability (GPIO_DRIVE_CAP_3) for high volume.
+  3. Haptic Vibration Motor & Audio Beep Feedback on GPIO 21 & GPIO 20/19.
   ===================================================================
 */
 
@@ -19,18 +20,16 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_rom_sys.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "driver/spi_master.h"
-#include "driver/ledc.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
-#include "usb/usb_host.h"
-#include "usb/uac_host.h"
 
 static const char *TAG = "RhythmSleep_ESPIDF";
 
@@ -56,16 +55,14 @@ static const char *TAG = "RhythmSleep_ESPIDF";
 
 #define SD_CS_PIN          GPIO_NUM_10
 
-#define USB_AUDIO_DP_PIN   GPIO_NUM_20
-#define USB_AUDIO_DN_PIN   GPIO_NUM_19
+#define USB_AUDIO_DP_PIN   GPIO_NUM_20  // Speaker Output (+)
+#define USB_AUDIO_DN_PIN   GPIO_NUM_19  // Speaker Output (-)
 
 // Display Dimensions
 #define LCD_H_RES          320
 #define LCD_V_RES          240
 
 static esp_lcd_panel_handle_t panel_handle = NULL;
-static uac_host_device_handle_t uac_device_handle = NULL;
-static bool uac_connected = false;
 
 // RGB565 Color Definitions
 #define COLOR_BLACK        0x0000
@@ -81,11 +78,11 @@ static bool uac_connected = false;
 #define COLOR_LIGHT_GRAY   0xCE59
 #define COLOR_BLUE         0x001F
 
-// System State Variables
+// System Time & State
 static int system_hours = 22;
 static int system_minutes = 36;
 static int system_seconds = 15;
-static const char *nn_state_str = "DEEP SLEEP (88%)";
+static bool audio_active = true;
 
 // Helper: Fill Rect on LCD Buffer
 static void draw_rect(uint16_t *buf, int buf_w, int buf_h, int rx, int ry, int rw, int rh, uint16_t color) {
@@ -98,9 +95,8 @@ static void draw_rect(uint16_t *buf, int buf_w, int buf_h, int rx, int ry, int r
     }
 }
 
-// Helper: Draw 7x10 Simple ASCII Character onto buffer
+// Helper: Draw 5x7 ASCII Font scaled 2x
 static void draw_char(uint16_t *buf, int buf_w, int buf_h, int x, int y, char c, uint16_t color, uint16_t bg_color) {
-    // Simple 5x7 font representation for numbers & upper text
     static const uint8_t font_5x7[16][5] = {
         {0x3E, 0x51, 0x49, 0x45, 0x3E}, // 0
         {0x00, 0x42, 0x7F, 0x40, 0x00}, // 1
@@ -129,14 +125,12 @@ static void draw_char(uint16_t *buf, int buf_w, int buf_h, int x, int y, char c,
             uint8_t line = font_5x7[idx][col];
             for (int row = 0; row < 7; row++) {
                 uint16_t px_color = (line & (1 << row)) ? color : bg_color;
-                // Scale 2x for readability
                 draw_rect(buf, buf_w, buf_h, x + col * 2, y + row * 2, 2, 2, px_color);
             }
         }
     }
 }
 
-// Helper: Draw String
 static void draw_string(uint16_t *buf, int buf_w, int buf_h, int x, int y, const char *str, uint16_t color, uint16_t bg) {
     while (*str) {
         draw_char(buf, buf_w, buf_h, x, y, *str, color, bg);
@@ -145,118 +139,39 @@ static void draw_string(uint16_t *buf, int buf_w, int buf_h, int x, int y, const
     }
 }
 
-// --- High-Drive LEDC PWM Audio Engine (Differential 100 Hz Wave) ---
-static void init_pwm_audio(void) {
-    ESP_LOGI(TAG, "Initializing High-Drive 40 kHz LEDC PWM Audio Engine on GPIO 20 (D+) & GPIO 19 (D-)...");
+// --- Differential 100 Hz GPIO Square Wave Audio Task ---
+static void audio_speaker_task(void *pvParameters) {
+    ESP_LOGI(TAG, "Initializing 100 Hz Differential GPIO Audio Engine on GPIO 20 (D+) & GPIO 19 (D-)...");
 
-    // Set maximum GPIO drive capability for direct audio load
+    gpio_config_t audio_gpio_conf = {
+        .pin_bit_mask = (1ULL << USB_AUDIO_DP_PIN) | (1ULL << USB_AUDIO_DN_PIN),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    gpio_config(&audio_gpio_conf);
+
+    // Set maximum GPIO drive strength (20mA+)
     gpio_set_drive_capability(USB_AUDIO_DP_PIN, GPIO_DRIVE_CAP_3);
     gpio_set_drive_capability(USB_AUDIO_DN_PIN, GPIO_DRIVE_CAP_3);
 
-    ledc_timer_config_t ledc_timer = {
-        .speed_mode       = LEDC_LOW_SPEED_MODE,
-        .timer_num        = LEDC_TIMER_0,
-        .duty_resolution  = LEDC_TIMER_8_BIT,
-        .freq_hz          = 40000, // 40 kHz carrier
-        .clk_cfg          = LEDC_AUTO_CLK
-    };
-    ledc_timer_config(&ledc_timer);
-
-    ledc_channel_config_t ch_dp = {
-        .speed_mode     = LEDC_LOW_SPEED_MODE,
-        .channel        = LEDC_CHANNEL_0,
-        .timer_sel      = LEDC_TIMER_0,
-        .intr_type      = LEDC_INTR_DISABLE,
-        .gpio_num       = USB_AUDIO_DP_PIN,
-        .duty           = 128,
-        .hpoint         = 0
-    };
-    ledc_channel_config(&ch_dp);
-
-    ledc_channel_config_t ch_dn = {
-        .speed_mode     = LEDC_LOW_SPEED_MODE,
-        .channel        = LEDC_CHANNEL_1,
-        .timer_sel      = LEDC_TIMER_0,
-        .intr_type      = LEDC_INTR_DISABLE,
-        .gpio_num       = USB_AUDIO_DN_PIN,
-        .duty           = 128,
-        .hpoint         = 0
-    };
-    ledc_channel_config(&ch_dn);
-}
-
-// PWM Audio Wave Generator Task (Continuous 100 Hz Sine Wave)
-static void pwm_audio_task(void *pvParameters) {
-    float phase = 0.0f;
-    const float phase_inc = (2.0f * M_PI * 100.0f) / 2000.0f; // 100 Hz wave
+    bool state = false;
 
     while (1) {
-        float val = sinf(phase);
-        phase += phase_inc;
-        if (phase >= 2.0f * M_PI) phase -= 2.0f * M_PI;
-
-        uint32_t duty_dp = (uint32_t)(128.0f + val * 120.0f);
-        uint32_t duty_dn = (uint32_t)(128.0f - val * 120.0f);
-
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty_dp);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
-
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, duty_dn);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
-
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-}
-
-// --- USB Host Audio Callback ---
-static void uac_driver_callback(uint8_t addr, uint8_t iface_num, const uac_host_driver_event_t event, void *arg) {
-    if (event == UAC_HOST_DRIVER_EVENT_TX_CONNECTED) {
-        ESP_LOGI(TAG, "[USB DAC SUCCESS] USB-C DAC Connected! Starting UAC Stream...");
-        uac_host_device_config_t dev_config = {
-            .addr = addr,
-            .iface_num = iface_num,
-            .buffer_size = 16000,
-            .buffer_threshold = 4000,
-            .callback = NULL,
-            .callback_arg = NULL
-        };
-
-        if (uac_host_device_open(&dev_config, &uac_device_handle) == ESP_OK) {
-            uac_host_stream_config_t stream_config = {
-                .channels = 2,
-                .bit_resolution = 16,
-                .sample_freq = 44100,
-                .flags = 0
-            };
-            if (uac_host_device_start(uac_device_handle, &stream_config) == ESP_OK) {
-                uac_connected = true;
-            }
+        if (audio_active) {
+            state = !state;
+            gpio_set_level(USB_AUDIO_DP_PIN, state ? 1 : 0);
+            gpio_set_level(USB_AUDIO_DN_PIN, state ? 0 : 1);
+        } else {
+            gpio_set_level(USB_AUDIO_DP_PIN, 0);
+            gpio_set_level(USB_AUDIO_DN_PIN, 0);
         }
+        vTaskDelay(pdMS_TO_TICKS(5)); // 5ms high, 5ms low = 100 Hz tone
     }
 }
 
-// USB Host Audio Stream Write Task
-static void uac_audio_stream_task(void *pvParameters) {
-    int16_t pcm_buf[256];
-    float phase = 0.0f;
-    const float phase_inc = (2.0f * M_PI * 100.0f) / 44100.0f;
-
-    while (1) {
-        if (uac_connected && uac_device_handle != NULL) {
-            for (int i = 0; i < 128; i++) {
-                int16_t sample = (int16_t)(sinf(phase) * 20000.0f);
-                phase += phase_inc;
-                if (phase >= 2.0f * M_PI) phase -= 2.0f * M_PI;
-                pcm_buf[i * 2] = sample;     // Left
-                pcm_buf[i * 2 + 1] = sample; // Right
-            }
-            uac_host_device_write(uac_device_handle, (uint8_t *)pcm_buf, sizeof(pcm_buf), 10);
-        }
-        vTaskDelay(pdMS_TO_TICKS(5));
-    }
-}
-
-// --- ST7789 Display Driver Init ---
+// --- ST7789 Display Driver Initialization ---
 static void init_tft_display(void) {
     ESP_LOGI(TAG, "Initializing ST7789 2.8-inch TFT Display on SPI3_HOST...");
 
@@ -306,7 +221,7 @@ static void init_tft_display(void) {
     ESP_LOGI(TAG, "[TFT SUCCESS] ST7789 2.8\" TFT Display Initialized!");
 }
 
-// Continuous Dashboard UI Rendering Task (Full 320x240 Sleek Dark Theme)
+// --- Dashboard Render Task ---
 static void tft_render_task(void *pvParameters) {
     uint16_t *line_buffer = (uint16_t *)heap_caps_malloc(LCD_H_RES * 40 * sizeof(uint16_t), MALLOC_CAP_DMA);
     if (!line_buffer) return;
@@ -329,42 +244,33 @@ static void tft_render_task(void *pvParameters) {
         snprintf(time_str, sizeof(time_str), "%02d:%02d:%02d", system_hours, system_minutes, system_seconds);
 
         for (int y_block = 0; y_block < LCD_V_RES; y_block += 40) {
-            // Background fill
             uint16_t bg = (y_block == 0) ? COLOR_NAVY : COLOR_DARK_GRAY;
             for (int i = 0; i < LCD_H_RES * 40; i++) {
                 line_buffer[i] = bg;
             }
 
-            // Header Bar (y_block == 0)
+            // Header Bar
             if (y_block == 0) {
-                // Top accent line (Cyan)
                 draw_rect(line_buffer, LCD_H_RES, 40, 0, 0, LCD_H_RES, 3, COLOR_CYAN);
-                // System title text
                 draw_string(line_buffer, LCD_H_RES, 40, 10, 10, "RHYTHMSLEEP", COLOR_WHITE, COLOR_NAVY);
-                // Status indicator dot
                 draw_rect(line_buffer, LCD_H_RES, 40, 290, 12, 10, 10, COLOR_GREEN);
             }
 
-            // Time & Status Box (y_block == 40)
+            // Time & Sleep State
             if (y_block == 40) {
-                // Clock box
                 draw_rect(line_buffer, LCD_H_RES, 40, 10, 5, 140, 30, COLOR_BLACK);
                 draw_string(line_buffer, LCD_H_RES, 40, 18, 12, time_str, COLOR_CYAN, COLOR_BLACK);
 
-                // NN Sleep State Badge
                 draw_rect(line_buffer, LCD_H_RES, 40, 160, 5, 150, 30, COLOR_BLUE);
                 draw_string(line_buffer, LCD_H_RES, 40, 168, 12, "DEEP SLEEP", COLOR_WHITE, COLOR_BLUE);
             }
 
-            // Realtime Live EEG Waveform Graph (y_block == 80 & 120)
+            // Realtime EEG Graph
             if (y_block == 80 || y_block == 120) {
                 int local_y_offset = (y_block == 80) ? 0 : 40;
-                // Draw graph grid lines
                 for (int x = 0; x < LCD_H_RES; x += 20) {
                     draw_rect(line_buffer, LCD_H_RES, 40, x, 0, 1, 40, COLOR_NAVY);
                 }
-
-                // Plot Sine EEG wave
                 for (int x = 0; x < LCD_H_RES; x++) {
                     float wave = sinf((float)(x + tick * 6) * 0.04f) * 25.0f;
                     int wave_y = 40 - (int)wave - local_y_offset;
@@ -374,13 +280,13 @@ static void tft_render_task(void *pvParameters) {
                 }
             }
 
-            // Audio & Sensor Metrics (y_block == 160)
+            // Audio Output Status
             if (y_block == 160) {
                 draw_rect(line_buffer, LCD_H_RES, 40, 10, 5, 300, 28, COLOR_BLACK);
                 draw_string(line_buffer, LCD_H_RES, 40, 20, 10, "AUDIO: 100HZ ACTIVE", COLOR_YELLOW, COLOR_BLACK);
             }
 
-            // Footer Navigation Legend (y_block == 200)
+            // Footer Legend
             if (y_block == 200) {
                 draw_rect(line_buffer, LCD_H_RES, 40, 0, 37, LCD_H_RES, 3, COLOR_CYAN);
                 draw_string(line_buffer, LCD_H_RES, 40, 15, 12, "MENU", COLOR_LIGHT_GRAY, COLOR_DARK_GRAY);
@@ -392,15 +298,15 @@ static void tft_render_task(void *pvParameters) {
             esp_lcd_panel_draw_bitmap(panel_handle, 0, y_block, LCD_H_RES, y_block + 40, line_buffer);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(100)); // 10 FPS refresh loop
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
 // --- Main Application Entry Point ---
 void app_main(void) {
-    ESP_LOGI(TAG, "=== ESP32-S3 RhythmSleep ESP-IDF Application ===");
+    ESP_LOGI(TAG, "=== ESP32-S3 RhythmSleep ESP-IDF Official Application ===");
 
-    // 1. Configure GPIO Buttons & Haptic Feedback
+    // 1. Buttons & Haptic Motor
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << BTN_MENU_PIN) | (1ULL << BTN_UP_PIN) | (1ULL << BTN_DOWN_PIN) | (1ULL << BTN_SELECT_PIN),
         .mode = GPIO_MODE_INPUT,
@@ -420,36 +326,17 @@ void app_main(void) {
     gpio_config(&out_conf);
     gpio_set_level(PIN_VIBRATION, 0);
 
-    // 2. Initialize ST7789 TFT Display & Start Dashboard UI Render Task
+    // 2. Initialize ST7789 TFT Display & UI Render Task
     init_tft_display();
     xTaskCreate(tft_render_task, "tft_render_task", 4096, NULL, 3, NULL);
 
-    // 3. Initialize High-Drive Differential LEDC PWM Audio Engine
-    init_pwm_audio();
-    xTaskCreate(pwm_audio_task, "pwm_audio_task", 2048, NULL, 5, NULL);
+    // 3. Start 100 Hz High-Drive Audio Task on GPIO 20 (D+) & GPIO 19 (D-)
+    xTaskCreate(audio_speaker_task, "audio_speaker_task", 2048, NULL, 5, NULL);
 
-    // 4. Initialize USB Host UAC 1.0 Driver & Audio Streamer
-    const usb_host_config_t host_config = {
-        .skip_phy_setup = false,
-        .intr_flags = ESP_INTR_FLAG_LEVEL1,
-    };
-    if (usb_host_install(&host_config) == ESP_OK) {
-        uac_host_driver_config_t uac_config = {
-            .create_background_task = true,
-            .task_priority = 5,
-            .stack_size = 4096,
-            .core_id = tskNO_AFFINITY,
-            .callback = uac_driver_callback,
-            .callback_arg = NULL
-        };
-        uac_host_install(&uac_config);
-        xTaskCreate(uac_audio_stream_task, "uac_audio_stream_task", 3072, NULL, 5, NULL);
-    }
-
-    ESP_LOGI(TAG, "RhythmSleep Application Initialized & Running Smoothly.");
+    ESP_LOGI(TAG, "RhythmSleep System Initialized & Running.");
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
-        ESP_LOGI(TAG, "System Tick: UI Active | PWM Audio Active (GPIO 19/20) | USB UAC Status: %s", uac_connected ? "STREAMING" : "WAITING");
+        ESP_LOGI(TAG, "System Tick: TFT Dashboard Active | 100 Hz Differential Audio Generator Active (GPIO 19/20)");
     }
 }
