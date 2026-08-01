@@ -1,0 +1,47 @@
+[0/1] Re-running CMake...
+-- Building ESP-IDF components for target esp32s3
+NOTICE: Skipping optional dependency: espressif/usb
+NOTICE: Processing 3 dependencies:
+NOTICE: [1/3] espressif/cmake_utilities (0.5.3)
+NOTICE: [2/3] espressif/usb_host_uac (1.5.0)
+NOTICE: [3/3] idf (5.1.2)
+NOTICE: Skipping optional dependency: espressif/usb
+-- Project sdkconfig file /home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/sdkconfig
+Loading defaults file /home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/sdkconfig.defaults...
+-- App "esp32s3_rhythmSleep_espidf" version: 769ebbf-dirty
+-- Adding linker script /home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/esp-idf/esp_system/ld/memory.ld
+-- Adding linker script /home/izaan/esp/esp-idf/components/esp_system/ld/esp32s3/sections.ld.in
+-- Adding linker script /home/izaan/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.ld
+-- Adding linker script /home/izaan/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.api.ld
+-- Adding linker script /home/izaan/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.libgcc.ld
+-- Adding linker script /home/izaan/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.newlib.ld
+-- Adding linker script /home/izaan/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.version.ld
+-- Adding linker script /home/izaan/esp/esp-idf/components/soc/esp32s3/ld/esp32s3.peripherals.ld
+-- USB_HOST_UAC: 1.5.0
+-- Components: app_trace app_update bootloader bootloader_support bt cmock console cxx driver efuse esp-tls esp_adc esp_app_format esp_coex esp_common esp_eth esp_event esp_gdbstub esp_hid esp_http_client esp_http_server esp_https_ota esp_https_server esp_hw_support esp_lcd esp_local_ctrl esp_mm esp_netif esp_netif_stack esp_partition esp_phy esp_pm esp_psram esp_ringbuf esp_rom esp_system esp_timer esp_wifi espcoredump espressif__cmake_utilities espressif__usb_host_uac esptool_py fatfs freertos hal heap http_parser idf_test ieee802154 json log lwip main mbedtls mqtt newlib nvs_flash openthread partition_table perfmon protobuf-c protocomm pthread sdmmc soc spi_flash spiffs tcp_transport touch_element ulp unity usb vfs wear_levelling wifi_provisioning wpa_supplicant xtensa
+-- Component paths: /home/izaan/esp/esp-idf/components/app_trace /home/izaan/esp/esp-idf/components/app_update /home/izaan/esp/esp-idf/components/bootloader /home/izaan/esp/esp-idf/components/bootloader_support /home/izaan/esp/esp-idf/components/bt /home/izaan/esp/esp-idf/components/cmock /home/izaan/esp/esp-idf/components/console /home/izaan/esp/esp-idf/components/cxx /home/izaan/esp/esp-idf/components/driver /home/izaan/esp/esp-idf/components/efuse /home/izaan/esp/esp-idf/components/esp-tls /home/izaan/esp/esp-idf/components/esp_adc /home/izaan/esp/esp-idf/components/esp_app_format /home/izaan/esp/esp-idf/components/esp_coex /home/izaan/esp/esp-idf/components/esp_common /home/izaan/esp/esp-idf/components/esp_eth /home/izaan/esp/esp-idf/components/esp_event /home/izaan/esp/esp-idf/components/esp_gdbstub /home/izaan/esp/esp-idf/components/esp_hid /home/izaan/esp/esp-idf/components/esp_http_client /home/izaan/esp/esp-idf/components/esp_http_server /home/izaan/esp/esp-idf/components/esp_https_ota /home/izaan/esp/esp-idf/components/esp_https_server /home/izaan/esp/esp-idf/components/esp_hw_support /home/izaan/esp/esp-idf/components/esp_lcd /home/izaan/esp/esp-idf/components/esp_local_ctrl /home/izaan/esp/esp-idf/components/esp_mm /home/izaan/esp/esp-idf/components/esp_netif /home/izaan/esp/esp-idf/components/esp_netif_stack /home/izaan/esp/esp-idf/components/esp_partition /home/izaan/esp/esp-idf/components/esp_phy /home/izaan/esp/esp-idf/components/esp_pm /home/izaan/esp/esp-idf/components/esp_psram /home/izaan/esp/esp-idf/components/esp_ringbuf /home/izaan/esp/esp-idf/components/esp_rom /home/izaan/esp/esp-idf/components/esp_system /home/izaan/esp/esp-idf/components/esp_timer /home/izaan/esp/esp-idf/components/esp_wifi /home/izaan/esp/esp-idf/components/espcoredump /home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/managed_components/espressif__cmake_utilities /home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/managed_components/espressif__usb_host_uac /home/izaan/esp/esp-idf/components/esptool_py /home/izaan/esp/esp-idf/components/fatfs /home/izaan/esp/esp-idf/components/freertos /home/izaan/esp/esp-idf/components/hal /home/izaan/esp/esp-idf/components/heap /home/izaan/esp/esp-idf/components/http_parser /home/izaan/esp/esp-idf/components/idf_test /home/izaan/esp/esp-idf/components/ieee802154 /home/izaan/esp/esp-idf/components/json /home/izaan/esp/esp-idf/components/log /home/izaan/esp/esp-idf/components/lwip /home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/main /home/izaan/esp/esp-idf/components/mbedtls /home/izaan/esp/esp-idf/components/mqtt /home/izaan/esp/esp-idf/components/newlib /home/izaan/esp/esp-idf/components/nvs_flash /home/izaan/esp/esp-idf/components/openthread /home/izaan/esp/esp-idf/components/partition_table /home/izaan/esp/esp-idf/components/perfmon /home/izaan/esp/esp-idf/components/protobuf-c /home/izaan/esp/esp-idf/components/protocomm /home/izaan/esp/esp-idf/components/pthread /home/izaan/esp/esp-idf/components/sdmmc /home/izaan/esp/esp-idf/components/soc /home/izaan/esp/esp-idf/components/spi_flash /home/izaan/esp/esp-idf/components/spiffs /home/izaan/esp/esp-idf/components/tcp_transport /home/izaan/esp/esp-idf/components/touch_element /home/izaan/esp/esp-idf/components/ulp /home/izaan/esp/esp-idf/components/unity /home/izaan/esp/esp-idf/components/usb /home/izaan/esp/esp-idf/components/vfs /home/izaan/esp/esp-idf/components/wear_levelling /home/izaan/esp/esp-idf/components/wifi_provisioning /home/izaan/esp/esp-idf/components/wpa_supplicant /home/izaan/esp/esp-idf/components/xtensa
+-- Configuring done (4.3s)
+-- Generating done (0.5s)
+-- Build files have been written to: /home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build
+[1/12] Building C object esp-idf/esp_app_format/CMakeFiles/__idf_esp_app_format.dir/esp_app_desc.c.obj
+[2/12] Linking C static library esp-idf/esp_app_format/libesp_app_format.a
+[3/12] Performing build step for 'bootloader'
+[1/1] cd /home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/bootloader/esp-idf/esptool_py && /home/izaan/.espressif/python_env/idf5.1_py3.14_env/bin/python /home/izaan/esp/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/bootloader/bootloader.bin
+Bootloader binary size 0x50c0 bytes. 0x2f40 bytes (37%) free.
+[4/12] No install step for 'bootloader'
+[5/12] Completed 'bootloader'
+[6/12] Building C object esp-idf/main/CMakeFiles/__idf_main.dir/main.c.obj
+/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/main/main.c:88:20: warning: 'nn_state_str' defined but not used [-Wunused-variable]
+   88 | static const char *nn_state_str = "DEEP SLEEP (88%)";
+      |                    ^~~~~~~~~~~~
+[7/12] Linking C static library esp-idf/main/libmain.a
+[8/12] Generating ld/sections.ld
+[9/12] Linking CXX executable esp32s3_rhythmSleep_espidf.elf
+[10/12] Generating binary image from built executable
+esptool.py v4.12.0
+Creating esp32s3 image...
+Merged 2 ELF sections
+Successfully created esp32s3 image.
+Generated /home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/esp32s3_rhythmSleep_espidf.bin
+[11/12] cd /home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/esp-idf/esptool_py && /home/izaan/.espressif/python_env/idf5.1_py3.14_env/bin/python /home/izaan/esp/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/partition_table/partition-table.bin /home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/esp32s3_rhythmSleep_espidf.bin
+esp32s3_rhythmSleep_espidf.bin binary size 0x4d530 bytes. Smallest app partition is 0x100000 bytes. 0xb2ad0 bytes (70%) free.
