@@ -1,0 +1,43 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/CMakeFiles/bootloader"
+		},
+		{
+			"file" : "/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/CMakeFiles/bootloader.rule"
+		},
+		{
+			"file" : "/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/CMakeFiles/bootloader-complete.rule"
+		},
+		{
+			"file" : "/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule"
+		},
+		{
+			"file" : "/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule"
+		},
+		{
+			"file" : "/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule"
+		},
+		{
+			"file" : "/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule"
+		},
+		{
+			"file" : "/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule"
+		},
+		{
+			"file" : "/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule"
+		},
+		{
+			"file" : "/home/izaan/Documents/rhy/esp32s3_rhythmSleep_espidf/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"bootloader"
+		],
+		"name" : "bootloader"
+	}
+}

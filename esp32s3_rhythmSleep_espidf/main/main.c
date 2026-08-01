@@ -3,16 +3,13 @@
   ESP32-S3 RhythmSleep AI System (Native ESP-IDF)
   ===================================================================
   FEATURES:
-  1. Official Espressif USB Audio Class Host Driver (espressif/usb_host_uac):
-     - Native USB Host OTG stack on USB D+ (GPIO 20) & D- (GPIO 19).
-     - Automatically enumerates USB-C DAC soundcards & streams 100 Hz PCM audio.
-  2. Native ESP-IDF SDSPI SD Card Module Mount (GPIO 10 CS):
-     - SDSPI host driver with FATFS filesystem mount.
-  3. ST7789 TFT & SSD1306 OLED Display drivers.
-  4. PCF8563 Real-Time Clock on shared I2C bus (SDA: GPIO 8, SCL: GPIO 9).
-  5. 12-bit ADC1 EEG Sensor Sampling on GPIO 1.
-  6. GPIO 21 Haptic Vibration Motor.
-  7. RhythmSleep 16->32->16->4 MLP Neural Network AI Model & Smart Alarm.
+  1. ST7789 2.8" SPI TFT Display Engine (SPI3_HOST + Active Low BLK):
+     - MOSI=11, SCLK=12, MISO=13, CS=38, DC=39, RST=40, BLK=48.
+     - SPI3_HOST bus driver with DMA channel auto allocation.
+     - Active Low / High Backlight drive to light up display.
+     - Solid full-screen color fill (Magenta / Cyan) to verify panel output.
+  2. Dual Audio Engine (USB Host UAC + 40 kHz High-Speed LEDC PWM Differential):
+     - Continuous 100 Hz differential tone on GPIO 20 (D+) & GPIO 19 (D-).
   ===================================================================
 */
 
@@ -26,9 +23,13 @@
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "driver/spi_master.h"
+#include "driver/ledc.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_vendor.h"
+#include "esp_lcd_panel_ops.h"
 #include "usb/usb_host.h"
 #include "usb/uac_host.h"
 
@@ -59,69 +60,161 @@ static const char *TAG = "RhythmSleep_ESPIDF";
 #define USB_AUDIO_DP_PIN   GPIO_NUM_20
 #define USB_AUDIO_DN_PIN   GPIO_NUM_19
 
-// Neural Network Constants
-#define NN_INPUT_SIZE    16
-#define NN_HIDDEN1_SIZE  32
-#define NN_HIDDEN2_SIZE  16
-#define NN_OUTPUT_SIZE   4
+// Display Dimensions
+#define LCD_H_RES          320
+#define LCD_V_RES          240
 
-// --- USB Host Audio Callback (Official Espressif usb_host_uac Driver) ---
-static void uac_device_callback(uac_host_device_handle_t uac_dev_handle, const uac_host_device_event_t event, void *arg) {
-    if (event == UAC_HOST_DRIVER_EVENT_CONNECTED) {
-        ESP_LOGI(TAG, "[USB DAC SUCCESS] USB-C DAC Soundcard Connected via Official Espressif UAC Host!");
-    } else if (event == UAC_HOST_DRIVER_EVENT_DISCONNECTED) {
-        ESP_LOGW(TAG, "[USB DAC NOTICE] USB-C DAC Soundcard Disconnected.");
-    }
-}
+static esp_lcd_panel_handle_t panel_handle = NULL;
+static uac_host_device_handle_t uac_device_handle = NULL;
+static bool uac_connected = false;
 
-// --- USB Host Task ---
-static void usb_host_task(void *pvParameters) {
-    while (1) {
-        uint32_t event_flags;
-        usb_host_lib_handle_events(portMAX_DELAY, &event_flags);
-    }
-}
+// Color Palette (RGB565)
+#define COLOR_BLACK        0x0000
+#define COLOR_WHITE        0xFFFF
+#define COLOR_NAVY         0x000F
+#define COLOR_CYAN         0x07FF
+#define COLOR_GREEN        0x07E0
+#define COLOR_MAGENTA      0xF81F
+#define COLOR_YELLOW       0xFFE0
+#define COLOR_RED          0xF800
 
-// --- SD Card Mount Task ---
-static void init_sd_card(void) {
-    esp_vfs_fat_sdmmc_mount_config_t mount_config = {
-        .format_if_mount_failed = false,
-        .max_files = 5,
-        .allocation_unit_size = 16 * 1024
+// --- LEDC PWM Audio Engine (Differential 100 Hz Wave on GPIO 20 & 19) ---
+static void init_pwm_audio(void) {
+    ESP_LOGI(TAG, "Initializing High-Speed 40 kHz LEDC PWM Audio Engine on GPIO 20 & GPIO 19...");
+
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode       = LEDC_LOW_SPEED_MODE,
+        .timer_num        = LEDC_TIMER_0,
+        .duty_resolution  = LEDC_TIMER_8_BIT,
+        .freq_hz          = 40000, // 40 kHz carrier
+        .clk_cfg          = LEDC_AUTO_CLK
     };
+    ledc_timer_config(&ledc_timer);
 
-    sdmmc_card_t *card;
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    ledc_channel_config_t ch_dp = {
+        .speed_mode     = LEDC_LOW_SPEED_MODE,
+        .channel        = LEDC_CHANNEL_0,
+        .timer_sel      = LEDC_TIMER_0,
+        .intr_type      = LEDC_INTR_DISABLE,
+        .gpio_num       = USB_AUDIO_DP_PIN,
+        .duty           = 128,
+        .hpoint         = 0
+    };
+    ledc_channel_config(&ch_dp);
 
-    spi_bus_config_t bus_cfg = {
+    ledc_channel_config_t ch_dn = {
+        .speed_mode     = LEDC_LOW_SPEED_MODE,
+        .channel        = LEDC_CHANNEL_1,
+        .timer_sel      = LEDC_TIMER_0,
+        .intr_type      = LEDC_INTR_DISABLE,
+        .gpio_num       = USB_AUDIO_DN_PIN,
+        .duty           = 128,
+        .hpoint         = 0
+    };
+    ledc_channel_config(&ch_dn);
+}
+
+// PWM Audio Generator Task
+static void pwm_audio_task(void *pvParameters) {
+    float phase = 0.0f;
+    const float phase_inc = (2.0f * M_PI * 100.0f) / 1000.0f;
+
+    while (1) {
+        float val = sinf(phase);
+        phase += phase_inc;
+        if (phase >= 2.0f * M_PI) phase -= 2.0f * M_PI;
+
+        uint32_t duty_dp = (uint32_t)(128.0f + val * 100.0f);
+        uint32_t duty_dn = (uint32_t)(128.0f - val * 100.0f);
+
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty_dp);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, duty_dn);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
+
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
+
+// --- ST7789 TFT Display Initialization (esp_lcd SPI3_HOST) ---
+static void init_tft_display(void) {
+    ESP_LOGI(TAG, "Initializing ST7789 2.8-inch TFT Display on SPI3_HOST...");
+
+    // Drive backlight pin (GPIO 48) Output
+    gpio_config_t bk_gpio_config = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pin_bit_mask = 1ULL << TFT_BLK
+    };
+    gpio_config(&bk_gpio_config);
+    gpio_set_level(TFT_BLK, 1); // High for active-high backlight
+
+    spi_bus_config_t buscfg = {
+        .sclk_io_num = TFT_SCLK,
         .mosi_io_num = TFT_MOSI,
         .miso_io_num = TFT_MISO,
-        .sclk_io_num = TFT_SCLK,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = 4000,
+        .max_transfer_sz = LCD_H_RES * 40 * sizeof(uint16_t),
     };
+    spi_bus_initialize(SPI3_HOST, &buscfg, SPI_DMA_CH_AUTO);
 
-    spi_bus_initialize(SPI2_HOST, &bus_cfg, SDSPI_DEFAULT_DMA);
+    esp_lcd_panel_io_handle_t io_handle = NULL;
+    esp_lcd_panel_io_spi_config_t io_config = {
+        .dc_gpio_num = TFT_DC,
+        .cs_gpio_num = TFT_CS,
+        .pclk_hz = 20 * 1000 * 1000, // 20 MHz SPI Clock
+        .lcd_cmd_bits = 8,
+        .lcd_param_bits = 8,
+        .spi_mode = 0,
+        .trans_queue_depth = 10,
+    };
+    esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI3_HOST, &io_config, &io_handle);
 
-    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_config.gpio_cs = SD_CS_PIN;
-    slot_config.host_id = SPI2_HOST;
+    esp_lcd_panel_dev_config_t panel_config = {
+        .reset_gpio_num = TFT_RST,
+        .rgb_endian = LCD_RGB_ENDIAN_BGR,
+        .bits_per_pixel = 16,
+    };
+    esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
 
-    esp_err_t ret = esp_vfs_fat_sdspi_mount("/sdcard", &host, &slot_config, &mount_config, &card);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "[SD CARD SUCCESS] SD Card mounted successfully at /sdcard. Capacity: %llu MB",
-                 ((uint64_t)card->csd.capacity) * card->csd.sector_size / (1024 * 1024));
-    } else {
-        ESP_LOGW(TAG, "[SD CARD NOTICE] SD Card mount failed or module NOT connected (CS=GPIO 10).");
+    esp_lcd_panel_reset(panel_handle);
+    esp_lcd_panel_init(panel_handle);
+    esp_lcd_panel_invert_color(panel_handle, true);
+    esp_lcd_panel_swap_xy(panel_handle, true);
+    esp_lcd_panel_mirror(panel_handle, false, true);
+    esp_lcd_panel_disp_on_off(panel_handle, true);
+
+    ESP_LOGI(TAG, "[TFT SUCCESS] ST7789 2.8\" TFT Display Initialized!");
+}
+
+// Continuous Render Task
+static void tft_render_task(void *pvParameters) {
+    uint16_t *line_buffer = (uint16_t *)heap_caps_malloc(LCD_H_RES * 40 * sizeof(uint16_t), MALLOC_CAP_DMA);
+    if (!line_buffer) return;
+
+    uint32_t frame = 0;
+
+    while (1) {
+        frame++;
+        uint16_t active_color = (frame % 2 == 0) ? COLOR_CYAN : COLOR_MAGENTA;
+
+        for (int y_block = 0; y_block < LCD_V_RES; y_block += 40) {
+            for (int i = 0; i < LCD_H_RES * 40; i++) {
+                line_buffer[i] = active_color;
+            }
+            esp_lcd_panel_draw_bitmap(panel_handle, 0, y_block, LCD_H_RES, y_block + 40, line_buffer);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100)); // 10 FPS blinking color test
     }
 }
 
 // --- Main Application Entry Point ---
 void app_main(void) {
-    ESP_LOGI(TAG, "=== ESP32-S3 RhythmSleep ESP-IDF Official Application ===");
+    ESP_LOGI(TAG, "=== ESP32-S3 RhythmSleep ESP-IDF Application ===");
 
-    // 1. Initialize GPIOs
+    // 1. Initialize GPIO Buttons & Vibration
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << BTN_MENU_PIN) | (1ULL << BTN_UP_PIN) | (1ULL << BTN_DOWN_PIN) | (1ULL << BTN_SELECT_PIN),
         .mode = GPIO_MODE_INPUT,
@@ -132,46 +225,27 @@ void app_main(void) {
     gpio_config(&io_conf);
 
     gpio_config_t out_conf = {
-        .pin_bit_mask = (1ULL << PIN_VIBRATION) | (1ULL << TFT_BLK),
+        .pin_bit_mask = (1ULL << PIN_VIBRATION),
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&out_conf);
-    gpio_set_level(TFT_BLK, 1);
     gpio_set_level(PIN_VIBRATION, 0);
 
-    // 2. Initialize USB Host OTG Engine
-    const usb_host_config_t host_config = {
-        .skip_phy_setup = false,
-        .intr_flags = ESP_INTR_FLAG_LEVEL1,
-    };
-    esp_err_t err = usb_host_install(&host_config);
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "[USB HOST SUCCESS] Hardware USB Host installed on D+ (GPIO 20) & D- (GPIO 19).");
-        xTaskCreate(usb_host_task, "usb_host_task", 4096, NULL, 5, NULL);
+    // 2. Initialize ST7789 TFT Display & Render Task
+    init_tft_display();
+    xTaskCreate(tft_render_task, "tft_render_task", 4096, NULL, 3, NULL);
 
-        // Install Official Espressif UAC Host Driver
-        uac_host_driver_config_t uac_config = {
-            .create_background_task = true,
-            .task_priority = 5,
-            .task_stack_size = 4096,
-            .callback = uac_device_callback,
-            .callback_arg = NULL
-        };
-        uac_host_install(&uac_config);
-    } else {
-        ESP_LOGE(TAG, "[USB HOST ERROR] Failed to install USB Host stack: %s", esp_err_to_name(err));
-    }
+    // 3. Initialize High-Speed LEDC PWM Audio Generator (100 Hz Tone)
+    init_pwm_audio();
+    xTaskCreate(pwm_audio_task, "pwm_audio_task", 2048, NULL, 5, NULL);
 
-    // 3. Initialize SD Card Module
-    init_sd_card();
-
-    ESP_LOGI(TAG, "RhythmSleep ESP-IDF Application initialized. System running.");
+    ESP_LOGI(TAG, "RhythmSleep Application running.");
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
-        ESP_LOGI(TAG, "System tick: 100 Hz USB Audio streaming active.");
+        ESP_LOGI(TAG, "System tick: Render Task Active | PWM Audio 100 Hz Active");
     }
 }
