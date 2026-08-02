@@ -1,2 +1,0 @@
-dependencies:
-  espressif/usb_host_uac: "^1.0.0"

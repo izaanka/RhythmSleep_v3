@@ -15,6 +15,9 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_ST7789.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
 #include <math.h>
 
 // --- Pin Definitions ---
@@ -35,18 +38,18 @@
 #define TFT_MOSI       11
 #define TFT_SCLK       12
 #define TFT_MISO       13
-#define TFT_CS         38
-#define TFT_DC         39
-#define TFT_RST        40
+#define TFT_CS         38  // Chip Select for ST7789 Display
+#define TFT_DC         39  // Data / Command Pin
+#define TFT_RST        40  // Reset Pin
 #define TFT_BLK        48  // Backlight LED Control Pin
 
 // --- SD Card Module Pin ---
-#define SD_CS_PIN      10
+#define SD_CS_PIN      10  // Chip Select for SD Card Module
 
-// --- USB-C Audio Pins ---
-#define USB_AUDIO_DP_PIN 20  // USB D+
-#define USB_AUDIO_DN_PIN 19  // USB D-
-#define TONE_HALF_PERIOD_US 5000  // 5000 us = 5 ms (100 Hz tone)
+// --- Audio Speaker Pins ---
+#define USB_AUDIO_DP_PIN 20  // Speaker D+
+#define USB_AUDIO_DN_PIN 19  // Speaker D-
+#define LEDC_AUDIO_CH    0
 
 // --- OLED Configuration ---
 #define OLED_WIDTH     128
@@ -171,7 +174,7 @@ const float DEFAULT_NN_WEIGHTS[1140] PROGMEM = {
     0.395155f, 0.450154f, 0.495155f, 0.550154f, 0.595155f, 0.650154f, 0.695155f, 0.750154f,
     -0.083730f, -0.098826f, -0.100609f, -0.111666f, -0.119707f, -0.124508f, -0.138837f, -0.141870f,
     -0.080556f, -0.098599f, -0.101018f, -0.110182f, -0.118985f, -0.122849f, -0.132607f, -0.142364f,
-    -0.082531f, -0.094599f, -0.100344f, -0.114389f, -0.118542f, -0.123249f, -0.138481f, -0.140355f,
+    -0.082531f, -0.094599f, -0.100344f, -0.114389f, -0.118542f, -0.123224f, -0.138481f, -0.140355f,
     -0.080707f, -0.098018f, -0.100882f, -0.112824f, -0.118817f, -0.125683f, -0.130280f, -0.143587f,
     -0.101820f, -0.113797f, -0.120721f, -0.130683f, -0.140882f, -0.150609f, -0.160144f, -0.170683f,
     -0.104128f, -0.114220f, -0.120609f, -0.130189f, -0.140707f, -0.150330f, -0.160082f, -0.170363f,
@@ -200,13 +203,13 @@ float nnRAMWeights[1140];
 // Display Drivers & Peripherals
 RTC_PCF8563 rtc;
 Adafruit_SSD1306 oledDisplay(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET);
-Adafruit_ST7789  tftDisplay = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
+Adafruit_ST7789  tftDisplay = Adafruit_ST7789(&SPI, TFT_CS, TFT_DC, TFT_RST);
 
 bool rtcAvailable   = false;
 bool oledAvailable  = false;
 bool tftAvailable   = false;
 bool sdAvailable    = false;  // SD Card status flag
-bool usbAudioActive = false; // USB Audio Status Flag
+bool bleConnected   = false;  // BLE connection state
 
 // Display Sleep / Backlight Timeout Tracking
 unsigned long lastActivityMs = 0;
@@ -244,8 +247,20 @@ uint16_t history120Count = 0;
 bool alarmRinging = false;
 bool alarmTriggeredToday = false;
 
-// Menu State
-uint8_t currentMenu = 0; // 0: Time, 1: EEG Freq & NN State, 2: Alarm Settings Page
+// Menu State: 5 Total Menus
+// 0: Time & Date
+// 1: EEG Freq & Neural Network Sleep AI
+// 2: Smart Alarm Settings
+// 3: Bluetooth / Wireless Audio Control & Status
+// 4: SD Card Music & Audio File Player
+uint8_t currentMenu = 0;
+
+// SD Music Player State
+#define MAX_SD_FILES 20
+String sdFileList[MAX_SD_FILES];
+uint8_t sdFileCount = 0;
+int8_t  selectedFileIdx = 0;
+bool    musicPlaying = false;
 
 // Alarm Configuration
 struct AlarmConfig {
@@ -278,39 +293,82 @@ const char* daysOfWeek[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 const char* monthsOfYear[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 const char* nnStageNames[] = {"WAKE", "LIGHT", "DEEP", "REM"};
 
+// BLE Server Callbacks
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      bleConnected = true;
+      Serial.println("[BLE SUCCESS] Client connected.");
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      bleConnected = false;
+      Serial.println("[BLE NOTICE] Client disconnected. Restarting advertising...");
+      BLEDevice::startAdvertising();
+    }
+};
+
 // ===================================================================
-// Audio Driver for USB-C DAC Soundcards
+// Audio Driver via ESP32 Hardware LEDC Timer
 // ===================================================================
 
-void initUSBHeadphoneAudio() {
+void initAudioSpeaker() {
   pinMode(USB_AUDIO_DP_PIN, OUTPUT);
   pinMode(USB_AUDIO_DN_PIN, OUTPUT);
   digitalWrite(USB_AUDIO_DP_PIN, LOW);
-  digitalWrite(USB_AUDIO_DN_PIN, HIGH);
+  digitalWrite(USB_AUDIO_DN_PIN, LOW);
 
-  usbAudioActive = true;
-  Serial.printf("[USB DAC SUCCESS] Audio streamer active on USB D+ (GPIO %d) & D- (GPIO %d).\n", USB_AUDIO_DP_PIN, USB_AUDIO_DN_PIN);
+  // Attach LEDC timer for non-blocking hardware tone generation on GPIO 20
+  ledcSetup(LEDC_AUDIO_CH, 440, 8); // 8-bit PWM at 440 Hz
+  ledcAttachPin(USB_AUDIO_DP_PIN, LEDC_AUDIO_CH);
+  ledcWrite(LEDC_AUDIO_CH, 0); // Silence
+
+  Serial.println("[AUDIO SUCCESS] Hardware LEDC Audio initialized on GPIO 20 (D+) & GPIO 19 (D-).");
 }
 
-void updateUSBHeadphoneAudioStream() {
-  static unsigned long lastToggleUs = 0;
-
-  // Stream 100 Hz differential audio wave to USB-C DAC at 5ms half-period (100 Hz)
-  if (micros() - lastToggleUs >= TONE_HALF_PERIOD_US) {
-    lastToggleUs = micros();
-
-    static bool dacState = false;
-    dacState = !dacState;
-
-    if (!usbAudioActive) return;
-    digitalWrite(USB_AUDIO_DP_PIN, dacState ? HIGH : LOW);
-    digitalWrite(USB_AUDIO_DN_PIN, dacState ? LOW : HIGH);
+void playTone(uint32_t freq) {
+  if (freq == 0) {
+    ledcWrite(LEDC_AUDIO_CH, 0);
+  } else {
+    ledcWriteTone(LEDC_AUDIO_CH, freq);
   }
 }
 
 // ===================================================================
-// SD Card Detection Helper (Initializes SPI cleanly for SD Card)
+// SD Card Helper & File Scanner
 // ===================================================================
+
+void deselectSPI() {
+  digitalWrite(SD_CS_PIN, HIGH);
+  digitalWrite(TFT_CS, HIGH);
+}
+
+void scanSDFiles() {
+  sdFileCount = 0;
+  if (!sdAvailable) return;
+
+  digitalWrite(TFT_CS, HIGH);
+  digitalWrite(SD_CS_PIN, LOW);
+
+  File root = SD.open("/");
+  if (!root) {
+    digitalWrite(SD_CS_PIN, HIGH);
+    return;
+  }
+
+  File file = root.openNextFile();
+  while (file && sdFileCount < MAX_SD_FILES) {
+    if (!file.isDirectory()) {
+      String name = String(file.name());
+      if (name.endsWith(".wav") || name.endsWith(".WAV") || name.endsWith(".mp3") || name.endsWith(".MP3") || name.endsWith(".txt")) {
+        sdFileList[sdFileCount++] = name;
+      }
+    }
+    file = root.openNextFile();
+  }
+  root.close();
+  digitalWrite(SD_CS_PIN, HIGH);
+  Serial.printf("[SD MUSIC] Found %d audio files on SD Card.\n", sdFileCount);
+}
 
 void checkSDCardDetection() {
   pinMode(SD_CS_PIN, OUTPUT);
@@ -320,20 +378,17 @@ void checkSDCardDetection() {
 
   delay(20);
 
-  // Initialize ESP32-S3 SPI Bus Pins explicitly before display
   SPI.begin(TFT_SCLK, TFT_MISO, TFT_MOSI, SD_CS_PIN);
 
-  // Pulse 80 dummy clocks with CS High to force SD card into SPI Mode
   digitalWrite(SD_CS_PIN, HIGH);
   for (int i = 0; i < 10; i++) {
     SPI.transfer(0xFF);
   }
 
-  // Attempt SD initialization (4 MHz first, fallback to 400kHz for weak wires)
   bool mounted = SD.begin(SD_CS_PIN, SPI, 4000000);
   if (!mounted) {
     delay(50);
-    mounted = SD.begin(SD_CS_PIN, SPI, 400000); // 400kHz slow mode
+    mounted = SD.begin(SD_CS_PIN, SPI, 400000);
   }
 
   if (mounted) {
@@ -341,57 +396,44 @@ void checkSDCardDetection() {
     if (cardType != CARD_NONE) {
       sdAvailable = true;
       uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-      Serial.printf("[SD CARD SUCCESS] SD Card detected. Type: ");
-      if (cardType == CARD_MMC) Serial.print("MMC");
-      else if (cardType == CARD_SD) Serial.print("SDSC");
-      else if (cardType == CARD_SDHC) Serial.print("SDHC");
-      else Serial.print("UNKNOWN");
-      Serial.printf(" | Capacity: %llu MB (Dormant Mode)\n", cardSize);
+      Serial.printf("[SD CARD SUCCESS] SD Card detected. Capacity: %llu MB\n", cardSize);
+      scanSDFiles();
     } else {
       sdAvailable = false;
       Serial.println("[SD CARD NOTICE] SD Card module connected, but slot is EMPTY.");
     }
   } else {
     sdAvailable = false;
-    Serial.println("[SD CARD NOTICE] SD Card mount failed or module NOT connected (CS=GPIO 10, MOSI=11, MISO=13, SCLK=12).");
+    Serial.println("[SD CARD NOTICE] SD Card mount failed or module NOT connected.");
   }
+
+  digitalWrite(SD_CS_PIN, HIGH);
 }
 
 // ===================================================================
-// Serial Command Time Parser ("dd/mm/yyyy-hh:mm:ss")
+// Bluetooth BLE Initialization
 // ===================================================================
 
-void checkSerialTimeCommand() {
-  if (Serial.available() > 0) {
-    String input = Serial.readStringUntil('\n');
-    input.trim();
+void initBLE() {
+  BLEDevice::init("RhythmSleep_AI");
+  BLEServer *pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+  
+  BLEService *pService = pServer->createService("180D"); // Heart Rate / Audio Service UUID
+  pService->start();
+  
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID("180D");
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
 
-    // Format expected: "dd/mm/yyyy-hh:mm:ss" (Length = 19 chars)
-    if (input.length() >= 19) {
-      int day = 0, month = 0, year = 0, hour = 0, minute = 0, second = 0;
-      if (sscanf(input.c_str(), "%d/%d/%d-%d:%d:%d", &day, &month, &year, &hour, &minute, &second) == 6) {
-        if (day >= 1 && day <= 31 && month >= 1 && month <= 12 && year >= 2020 && 
-            hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0 && second <= 59) {
-          
-          if (rtcAvailable) {
-            rtc.adjust(DateTime(year, month, day, hour, minute, second));
-            Serial.printf("[RTC SUCCESS] Time updated to: %02d/%02d/%04d %02d:%02d:%02d\n", 
-                          day, month, year, hour, minute, second);
-          } else {
-            Serial.println("[RTC ERROR] PCF8563 RTC hardware not available.");
-          }
-        } else {
-          Serial.println("[RTC ERROR] Date/time numbers out of valid ranges.");
-        }
-      } else {
-        Serial.println("[RTC ERROR] Invalid format! Send string like: 01/08/2026-21:53:00");
-      }
-    }
-  }
+  Serial.println("[BLE SUCCESS] BLE Server active as 'RhythmSleep_AI'. Advertising...");
 }
 
 // ===================================================================
-// Helper & Classification Strings
+// Display Helpers & Redraw
 // ===================================================================
 
 const char* getEEGBand(double freq) {
@@ -402,25 +444,24 @@ const char* getEEGBand(double freq) {
   return "Gamma (High Cog)";
 }
 
-// Wake Up Display helper
 void wakeUpDisplay() {
   lastActivityMs = millis();
   if (displaySleeping) {
     displaySleeping = false;
-    digitalWrite(TFT_BLK, HIGH); // Restore backlight LED voltage
+    digitalWrite(TFT_BLK, HIGH);
     Serial.println("[POWER] Display woken up by user interaction.");
-    lastTFTMenu = 255; // Force screen redraw on wake-up
+    lastTFTMenu = 255;
   }
 }
 
 // ===================================================================
-// OLED Rendering Functions (Dual Display Support)
+// OLED Rendering Functions (5 Menus)
 // ===================================================================
 
 void renderMenuTime(const DateTime &now) {
   oledDisplay.setTextSize(1);
   oledDisplay.setCursor(0, 0);
-  oledDisplay.print("[1/3] TIME & DATE");
+  oledDisplay.print("[1/5] TIME & DATE");
   oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
 
   char timeBuffer[10];
@@ -445,7 +486,7 @@ void renderMenuTime(const DateTime &now) {
 void renderMenuEEG() {
   oledDisplay.setTextSize(1);
   oledDisplay.setCursor(0, 0);
-  oledDisplay.print("[2/3] EEG & NEURAL AI");
+  oledDisplay.print("[2/5] EEG & NEURAL AI");
   oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
 
   oledDisplay.setCursor(0, 15);
@@ -468,7 +509,7 @@ void renderMenuEEG() {
 void renderMenuAlarm() {
   oledDisplay.setTextSize(1);
   oledDisplay.setCursor(0, 0);
-  oledDisplay.print("[3/3] SMART ALARM");
+  oledDisplay.print("[3/5] SMART ALARM");
   oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
 
   oledDisplay.setCursor(0, 16);
@@ -500,6 +541,50 @@ void renderMenuAlarm() {
   }
 }
 
+void renderMenuBLE() {
+  oledDisplay.setTextSize(1);
+  oledDisplay.setCursor(0, 0);
+  oledDisplay.print("[4/5] BLE & WIRELESS");
+  oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
+
+  oledDisplay.setCursor(0, 16);
+  oledDisplay.print("Device: RhythmSleep");
+
+  oledDisplay.setCursor(0, 28);
+  oledDisplay.printf("Status: %s", bleConnected ? "CONNECTED" : "ADVERTISING");
+
+  oledDisplay.drawFastHLine(0, 40, 128, SSD1306_WHITE);
+
+  oledDisplay.setCursor(0, 45);
+  oledDisplay.print("SEL: Test Sound Tone");
+  oledDisplay.setCursor(0, 55);
+  oledDisplay.print("UP/DN: Change Pitch");
+}
+
+void renderMenuSDPlayer() {
+  oledDisplay.setTextSize(1);
+  oledDisplay.setCursor(0, 0);
+  oledDisplay.print("[5/5] SD MUSIC PLAYER");
+  oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
+
+  if (sdFileCount == 0) {
+    oledDisplay.setCursor(0, 25);
+    oledDisplay.print(sdAvailable ? "No audio files found!" : "SD Card NOT mounted");
+  } else {
+    oledDisplay.setCursor(0, 16);
+    oledDisplay.printf("File %d/%d:", selectedFileIdx + 1, sdFileCount);
+    oledDisplay.setCursor(0, 28);
+    oledDisplay.print(sdFileList[selectedFileIdx].substring(0, 20));
+
+    oledDisplay.drawFastHLine(0, 40, 128, SSD1306_WHITE);
+
+    oledDisplay.setCursor(0, 45);
+    oledDisplay.printf("Status: %s", musicPlaying ? "PLAYING TONE" : "STOPPED");
+    oledDisplay.setCursor(0, 55);
+    oledDisplay.print("UP/DN:Scroll SEL:Play");
+  }
+}
+
 void renderOLEDAlarmRinging(const DateTime &now) {
   oledDisplay.setTextSize(1);
   oledDisplay.setCursor(15, 5);
@@ -522,6 +607,9 @@ void renderOLEDAlarmRinging(const DateTime &now) {
 // ===================================================================
 
 void drawTFTTouchButtons() {
+  digitalWrite(SD_CS_PIN, HIGH);
+  digitalWrite(TFT_CS, LOW);
+
   tftDisplay.drawFastHLine(0, 188, 320, ST7789_DARKGRAY);
 
   // Button 1: MENU
@@ -549,14 +637,19 @@ void drawTFTTouchButtons() {
   tftDisplay.drawRect(238, 192, 77, 42, ST7789_WHITE);
   tftDisplay.setCursor(244, 204);
   tftDisplay.print("SELECT");
+  
+  digitalWrite(TFT_CS, HIGH);
 }
 
 void renderTFTTime(const DateTime &now) {
+  digitalWrite(SD_CS_PIN, HIGH);
+  digitalWrite(TFT_CS, LOW);
+
   if (lastTFTSec == 255) {
     tftDisplay.setTextColor(ST7789_CYAN);
     tftDisplay.setTextSize(2);
     tftDisplay.setCursor(10, 10);
-    tftDisplay.print("RhythmSleep [1/3] TIME");
+    tftDisplay.print("RhythmSleep [1/5] TIME");
     tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
   }
 
@@ -580,14 +673,19 @@ void renderTFTTime(const DateTime &now) {
     tftDisplay.setCursor(45, 140);
     tftDisplay.print(dateBuf);
   }
+
+  digitalWrite(TFT_CS, HIGH);
 }
 
 void renderTFTEEG() {
+  digitalWrite(SD_CS_PIN, HIGH);
+  digitalWrite(TFT_CS, LOW);
+
   if (lastTFTSec == 255) {
     tftDisplay.setTextColor(ST7789_CYAN);
     tftDisplay.setTextSize(2);
     tftDisplay.setCursor(10, 10);
-    tftDisplay.print("RhythmSleep [2/3] EEG AI");
+    tftDisplay.print("RhythmSleep [2/5] EEG AI");
     tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
     lastTFTSec = 0;
   }
@@ -616,14 +714,19 @@ void renderTFTEEG() {
     }
     lastTFTFreqBarW = barW;
   }
+
+  digitalWrite(TFT_CS, HIGH);
 }
 
 void renderTFTAlarm() {
+  digitalWrite(SD_CS_PIN, HIGH);
+  digitalWrite(TFT_CS, LOW);
+
   if (lastTFTSec == 255) {
     tftDisplay.setTextColor(ST7789_CYAN);
     tftDisplay.setTextSize(2);
     tftDisplay.setCursor(10, 10);
-    tftDisplay.print("RhythmSleep [3/3] SMART ALARM");
+    tftDisplay.print("RhythmSleep [3/5] SMART ALARM");
     tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
     lastTFTSec = 0;
   }
@@ -659,12 +762,93 @@ void renderTFTAlarm() {
   tftDisplay.setTextColor(ST7789_LIGHTGRAY, ST7789_BLACK);
   tftDisplay.setTextSize(1);
   tftDisplay.setCursor(10, 155);
-  tftDisplay.print("Press OK (SELECT) button to turn OFF ringing alarm");
+  tftDisplay.print("Press OK (SELECT) button to edit/turn off alarm");
+
+  digitalWrite(TFT_CS, HIGH);
+}
+
+void renderTFTBLE() {
+  digitalWrite(SD_CS_PIN, HIGH);
+  digitalWrite(TFT_CS, LOW);
+
+  if (lastTFTSec == 255) {
+    tftDisplay.setTextColor(ST7789_CYAN);
+    tftDisplay.setTextSize(2);
+    tftDisplay.setCursor(10, 10);
+    tftDisplay.print("RhythmSleep [4/5] BLE AUDIO");
+    tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
+    lastTFTSec = 0;
+  }
+
+  tftDisplay.setTextSize(2);
+  tftDisplay.setTextColor(ST7789_WHITE, ST7789_BLACK);
+  tftDisplay.setCursor(10, 50);
+  tftDisplay.print("BLE Name: RhythmSleep_AI");
+
+  tftDisplay.setCursor(10, 85);
+  tftDisplay.print("Status  : ");
+  tftDisplay.setTextColor(bleConnected ? ST7789_GREEN : ST7789_YELLOW, ST7789_BLACK);
+  tftDisplay.print(bleConnected ? "CONNECTED   " : "ADVERTISING ");
+
+  tftDisplay.setTextColor(ST7789_WHITE, ST7789_BLACK);
+  tftDisplay.setCursor(10, 120);
+  tftDisplay.print("Audio Out: GPIO 20/19 LEDC");
+
+  tftDisplay.setTextColor(ST7789_LIGHTGRAY, ST7789_BLACK);
+  tftDisplay.setTextSize(1);
+  tftDisplay.setCursor(10, 155);
+  tftDisplay.print("Press SELECT to play test audio tone");
+
+  digitalWrite(TFT_CS, HIGH);
+}
+
+void renderTFTSDPlayer() {
+  digitalWrite(SD_CS_PIN, HIGH);
+  digitalWrite(TFT_CS, LOW);
+
+  if (lastTFTSec == 255) {
+    tftDisplay.setTextColor(ST7789_CYAN);
+    tftDisplay.setTextSize(2);
+    tftDisplay.setCursor(10, 10);
+    tftDisplay.print("RhythmSleep [5/5] SD PLAYER");
+    tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
+    lastTFTSec = 0;
+  }
+
+  tftDisplay.setTextSize(2);
+  if (sdFileCount == 0) {
+    tftDisplay.setTextColor(ST7789_RED, ST7789_BLACK);
+    tftDisplay.setCursor(10, 60);
+    tftDisplay.print(sdAvailable ? "No files found on SD!" : "SD Card Mount Error!");
+  } else {
+    tftDisplay.setTextColor(ST7789_YELLOW, ST7789_BLACK);
+    tftDisplay.setCursor(10, 50);
+    tftDisplay.printf("Track %d of %d:", selectedFileIdx + 1, sdFileCount);
+
+    tftDisplay.setTextColor(ST7789_WHITE, ST7789_BLACK);
+    tftDisplay.setCursor(10, 80);
+    tftDisplay.printf("> %-22s", sdFileList[selectedFileIdx].c_str());
+
+    tftDisplay.setCursor(10, 115);
+    tftDisplay.print("State: ");
+    tftDisplay.setTextColor(musicPlaying ? ST7789_GREEN : ST7789_LIGHTGRAY, ST7789_BLACK);
+    tftDisplay.print(musicPlaying ? "PLAYING TONE  " : "STOPPED       ");
+
+    tftDisplay.setTextColor(ST7789_LIGHTGRAY, ST7789_BLACK);
+    tftDisplay.setTextSize(1);
+    tftDisplay.setCursor(10, 155);
+    tftDisplay.print("UP/DN: Scroll Tracks | SELECT: Play/Stop");
+  }
+
+  digitalWrite(TFT_CS, HIGH);
 }
 
 void renderTFTAlarmRinging(const DateTime &now) {
   static bool toggleColor = false;
   toggleColor = !toggleColor;
+
+  digitalWrite(SD_CS_PIN, HIGH);
+  digitalWrite(TFT_CS, LOW);
 
   tftDisplay.fillRect(0, 0, 320, 240, toggleColor ? ST7789_RED : ST7789_YELLOW);
 
@@ -684,6 +868,8 @@ void renderTFTAlarmRinging(const DateTime &now) {
   tftDisplay.print("VIBRATING MOTOR...");
   tftDisplay.setCursor(15, 195);
   tftDisplay.print("Press OK Button to Stop");
+
+  digitalWrite(TFT_CS, HIGH);
 }
 
 // ===================================================================
@@ -831,7 +1017,7 @@ void runNeuralNetworkInference(double *vR, double *vI, uint16_t samples) {
 }
 
 // ===================================================================
-// Smart Alarm Evaluator (2-Minute Light Sleep Window & >50% Certainty)
+// Smart Alarm Evaluator
 // ===================================================================
 
 void updateSmartAlarm(const DateTime &now) {
@@ -839,7 +1025,6 @@ void updateSmartAlarm(const DateTime &now) {
   if (millis() - lastSecTick < 1000) return;
   lastSecTick = millis();
 
-  // Record 1-second sleep stage & light sleep certainty into 120-second rolling buffer
   float lightCertainty = (currentNNStage == STAGE_LIGHT || currentNNStage == STAGE_WAKE) ? currentNNConfidence : 0.0f;
   
   sleepStageHistory120[history120Index] = (uint8_t)currentNNStage;
@@ -875,20 +1060,20 @@ void updateSmartAlarm(const DateTime &now) {
 
       float avgCertainty = lightConfSum / (float)SMART_ALARM_WINDOW_SEC;
 
-      // Smart condition: At least 2 mins in light sleep/wake AND >50% average certainty
       if (lightStageSecs >= 100 && avgCertainty > 0.50f) {
         alarmRinging = true;
         alarmTriggeredToday = true;
         wakeUpDisplay();
-        Serial.printf("[SMART ALARM] Triggered! 2-min Light Sleep Avg Certainty: %.1f%%\n", avgCertainty * 100.0f);
+        playTone(523); // Play 523 Hz C5 alarm tone
+        Serial.printf("[SMART ALARM] Triggered! 2-min Light Sleep Certainty: %.1f%%\n", avgCertainty * 100.0f);
       }
     }
 
-    // Hard fallback: Ring if time reaches absolute endMin
     if (currentMin == endMin && !alarmTriggeredToday) {
       alarmRinging = true;
       alarmTriggeredToday = true;
       wakeUpDisplay();
+      playTone(523);
       Serial.println("[SMART ALARM] End of window reached. Triggering hard wake-up alarm!");
     }
   }
@@ -930,19 +1115,18 @@ void handleButtonActions() {
   bool btn3 = isButtonPressed(btnDown);
   bool btn4 = isButtonPressed(BTNSelect); // OK / SELECT Button
 
-  // When Alarm is Ringing, ONLY the OK (SELECT) button turns it OFF
   if (alarmRinging) {
     if (btn4) {
       alarmRinging = false;
-      digitalWrite(PIN_VIBRATION, LOW); // Stop vibration motor
+      digitalWrite(PIN_VIBRATION, LOW);
+      playTone(0); // Stop alarm sound
       lastTFTMenu = 255;
-      Serial.println("[ALARM] Smart Alarm turned OFF by OK (SELECT) button.");
+      Serial.println("[ALARM] Smart Alarm turned OFF by OK SELECT button.");
     }
     return;
   }
 
   if (btn1 || btn2 || btn3 || btn4) {
-    // If screen is sleeping, wake it up
     if (displaySleeping) {
       wakeUpDisplay();
       return;
@@ -952,10 +1136,11 @@ void handleButtonActions() {
 
   if (btn1) {
     alarmEditField = 0;
-    currentMenu = (currentMenu + 1) % 3;
+    currentMenu = (currentMenu + 1) % 5; // Cycle through 5 Menus
+    lastTFTMenu = 255;
   }
 
-  if (currentMenu == 2) {
+  if (currentMenu == 2) { // Menu 2: Smart Alarm Edits
     if (btn4) {
       alarmEditField = (alarmEditField + 1) % 6;
     }
@@ -982,37 +1167,32 @@ void handleButtonActions() {
       }
     }
   }
+  else if (currentMenu == 3) { // Menu 3: BLE Audio Control
+    if (btn4) { // SELECT plays test tone
+      static bool testToneState = false;
+      testToneState = !testToneState;
+      playTone(testToneState ? 440 : 0);
+    }
+  }
+  else if (currentMenu == 4) { // Menu 4: SD Music Player
+    if (sdFileCount > 0) {
+      if (btn2) { // UP
+        selectedFileIdx = (selectedFileIdx + 1) % sdFileCount;
+      }
+      if (btn3) { // DOWN
+        selectedFileIdx = (selectedFileIdx == 0) ? sdFileCount - 1 : selectedFileIdx - 1;
+      }
+      if (btn4) { // SELECT
+        musicPlaying = !musicPlaying;
+        playTone(musicPlaying ? 880 : 0);
+      }
+    }
+  }
 }
 
 // ===================================================================
 // Non-Blocking High-Precision Sampling & FFT
 // ===================================================================
-
-void updateFFT() {
-  if (micros() - lastSampleMicros >= samplingPeriodUs) {
-    lastSampleMicros = micros();
-
-    uint16_t rawVal = analogRead(ANALOG_EEG_PIN);
-    vReal[sampleIndex] = (double)rawVal;
-    vImag[sampleIndex] = 0.0;
-    sampleIndex++;
-
-    if (sampleIndex >= SAMPLES) {
-      double sum = 0;
-      for (uint16_t i = 0; i < SAMPLES; i++) sum += vReal[i];
-      double mean = sum / SAMPLES;
-      for (uint16_t i = 0; i < SAMPLES; i++) vReal[i] -= mean;
-
-      applyHannWindow(vReal, SAMPLES);
-      computeFFT(vReal, vImag, SAMPLES);
-      currentDominantFreq = findDominantFrequency(vReal, vImag, SAMPLES, SAMPLING_FREQ, MIN_FREQ, MAX_FREQ);
-
-      runNeuralNetworkInference(vReal, vImag, SAMPLES);
-
-      sampleIndex = 0;
-    }
-  }
-}
 
 void applyHannWindow(double *vData, uint16_t samples) {
   for (uint16_t i = 0; i < samples; i++) {
@@ -1085,6 +1265,32 @@ double findDominantFrequency(double *vR, double *vI, uint16_t samples, double sa
   return (peakBin * binWidth);
 }
 
+void updateFFT() {
+  if (micros() - lastSampleMicros >= samplingPeriodUs) {
+    lastSampleMicros = micros();
+
+    uint16_t rawVal = analogRead(ANALOG_EEG_PIN);
+    vReal[sampleIndex] = (double)rawVal;
+    vImag[sampleIndex] = 0.0;
+    sampleIndex++;
+
+    if (sampleIndex >= SAMPLES) {
+      double sum = 0;
+      for (uint16_t i = 0; i < SAMPLES; i++) sum += vReal[i];
+      double mean = sum / SAMPLES;
+      for (uint16_t i = 0; i < SAMPLES; i++) vReal[i] -= mean;
+
+      applyHannWindow(vReal, SAMPLES);
+      computeFFT(vReal, vImag, SAMPLES);
+      currentDominantFreq = findDominantFrequency(vReal, vImag, SAMPLES, SAMPLING_FREQ, MIN_FREQ, MAX_FREQ);
+
+      runNeuralNetworkInference(vReal, vImag, SAMPLES);
+
+      sampleIndex = 0;
+    }
+  }
+}
+
 // ===================================================================
 // Arduino Setup & Loop
 // ===================================================================
@@ -1093,46 +1299,39 @@ void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 3000);
 
-  Serial.println("\n--- ESP32-S3 System (ST7789 TFT + USB DAC Audio + SD Card + PCF8563) ---");
-  Serial.println("Send time sync via Serial: dd/mm/yyyy-hh:mm:ss (e.g. 01/08/2026-21:53:00)");
+  Serial.println("\n--- ESP32-S3 System (ST7789 TFT + BLE Audio + SD Music + PCF8563) ---");
 
-  // Copy PROGMEM NN weights to RAM
   memcpy_P(nnRAMWeights, DEFAULT_NN_WEIGHTS, sizeof(DEFAULT_NN_WEIGHTS));
 
-  // Configure Button Pins
   pinMode(BTN_MENU_PIN, INPUT_PULLUP);
   pinMode(BTN_UP_PIN, INPUT_PULLUP);
   pinMode(BTN_DOWN_PIN, INPUT_PULLUP);
   pinMode(BTN_SELECT_PIN, INPUT_PULLUP);
 
-  // Configure Haptic Vibration Motor Pin (GPIO 21)
   pinMode(PIN_VIBRATION, OUTPUT);
   digitalWrite(PIN_VIBRATION, LOW);
 
-  // Configure TFT Backlight PWM Pin (GPIO 48)
   pinMode(TFT_BLK, OUTPUT);
   digitalWrite(TFT_BLK, HIGH);
 
-  // Configure High-Res ADC (12-bit)
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);
 
-  // Initialize Audio Driver for USB-C DAC Soundcard
-  initUSBHeadphoneAudio();
+  initAudioSpeaker();
+  initBLE();
 
-  // Initialize Shared I2C Bus
   Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(400000);
 
-  // 1. Initialize SD Card Module (Clean SPI Init)
   checkSDCardDetection();
 
-  // 2. Initialize ST7789 2.8" TFT Display (SPI)
+  digitalWrite(SD_CS_PIN, HIGH);
+  digitalWrite(TFT_CS, LOW);
   tftDisplay.init(240, 320);
-  tftDisplay.setRotation(1);  // Landscape mode (320x240)
+  tftDisplay.setRotation(1);
   tftDisplay.fillScreen(ST7789_BLACK);
   tftAvailable = true;
 
-  // Splash Screen
   tftDisplay.setTextColor(ST7789_CYAN);
   tftDisplay.setTextSize(2);
   tftDisplay.setCursor(20, 40);
@@ -1141,13 +1340,13 @@ void setup() {
   tftDisplay.setTextColor(ST7789_WHITE);
   tftDisplay.setTextSize(1);
   tftDisplay.setCursor(20, 90);
-  tftDisplay.printf("SD Card: %s\n", sdAvailable ? "Detected (Dormant)" : "NOT FOUND / Mount Error");
+  tftDisplay.printf("SD Card: %s (%d files)\n", sdAvailable ? "Detected" : "NOT FOUND", sdFileCount);
   tftDisplay.setCursor(20, 105);
-  tftDisplay.println("USB-C DAC: Audio Active");
+  tftDisplay.println("BLE Server: RhythmSleep_AI");
   tftDisplay.setCursor(20, 120);
-  tftDisplay.println("Serial Time Sync: dd/mm/yyyy-hh:mm:ss");
+  tftDisplay.println("Audio Output: GPIO 20 LEDC");
+  digitalWrite(TFT_CS, HIGH);
 
-  // 3. Initialize OLED Display (I2C)
   if (oledDisplay.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR)) {
     oledAvailable = true;
     oledDisplay.clearDisplay();
@@ -1157,15 +1356,14 @@ void setup() {
     oledDisplay.println("RhythmSleep AI Model");
     oledDisplay.drawFastHLine(5, 24, 118, SSD1306_WHITE);
     oledDisplay.setCursor(5, 36);
-    oledDisplay.println(sdAvailable ? "SD Card: Detected" : "SD Card: NOT FOUND");
+    oledDisplay.printf("SD Files: %d\n", sdFileCount);
     oledDisplay.setCursor(5, 48);
-    oledDisplay.println("USB DAC Active");
+    oledDisplay.println("BLE & TFT Active");
     oledDisplay.display();
   }
 
   delay(1500);
 
-  // 4. Initialize PCF8563 RTC
   if (rtc.begin()) {
     rtcAvailable = true;
     if (rtc.lostPower()) {
@@ -1173,7 +1371,11 @@ void setup() {
     }
   }
 
+  digitalWrite(SD_CS_PIN, HIGH);
+  digitalWrite(TFT_CS, LOW);
   tftDisplay.fillScreen(ST7789_BLACK);
+  digitalWrite(TFT_CS, HIGH);
+
   drawTFTTouchButtons();
   
   lastActivityMs = millis();
@@ -1181,45 +1383,31 @@ void setup() {
 }
 
 void loop() {
-  // 1. Process Serial Time Sync Command ("dd/mm/yyyy-hh:mm:ss")
-  checkSerialTimeCommand();
-
-  // 2. Process Physical Button Actions (4 Tactile Buttons)
   handleButtonActions();
 
-  // 3. Stream Audio Signal to USB-C DAC Soundcard
-  updateUSBHeadphoneAudioStream();
-
-  // 4. Drive Rapid Haptic Vibration Motor when Alarm is Ringing
   if (alarmRinging) {
-    // Rapid 100ms ON / 100ms OFF haptic pulse on GPIO 21
     bool pulse = (millis() / 100) % 2;
     digitalWrite(PIN_VIBRATION, pulse ? HIGH : LOW);
   } else {
     digitalWrite(PIN_VIBRATION, LOW);
   }
 
-  // 5. Check 1-Minute Display Inactivity Timeout
   if (!displaySleeping && !alarmRinging && (millis() - lastActivityMs >= DISPLAY_TIMEOUT_MS)) {
     displaySleeping = true;
-    digitalWrite(TFT_BLK, LOW); // Drop LED backlight pin voltage (Sleep)
+    digitalWrite(TFT_BLK, LOW);
     Serial.println("[POWER] 1-Minute Inactivity Timeout: TFT Backlight Powered Down.");
   }
 
-  // 6. Continuous Non-Blocking EEG Sampling & Temporal FFT + NN Inference
   updateFFT();
 
-  // 7. Read Time
-  DateTime now = rtcAvailable ? rtc.now() : DateTime(2026, 8, 1, (millis()/3600000)%24, (millis()/60000)%60, (millis()/1000)%60);
+  DateTime now = rtcAvailable ? rtc.now() : DateTime(2026, 8, 2, (millis()/3600000)%24, (millis()/60000)%60, (millis()/1000)%60);
 
-  // 8. Evaluate Smart EEG Alarm
   updateSmartAlarm(now);
 
-  // 9. Render active menu on ST7789 2.8" TFT Display
   static unsigned long lastTFTRenderMs = 0;
   if (tftAvailable) {
     if (alarmRinging) {
-      if (millis() - lastTFTRenderMs >= 400) { // Flashing Alarm Screen
+      if (millis() - lastTFTRenderMs >= 400) {
         lastTFTRenderMs = millis();
         renderTFTAlarmRinging(now);
       }
@@ -1228,24 +1416,26 @@ void loop() {
       lastTFTRenderMs = millis();
 
       if (currentMenu != lastTFTMenu) {
+        digitalWrite(SD_CS_PIN, HIGH);
+        digitalWrite(TFT_CS, LOW);
         tftDisplay.fillRect(0, 0, 320, 185, ST7789_BLACK);
+        digitalWrite(TFT_CS, HIGH);
         drawTFTTouchButtons();
         lastTFTMenu = currentMenu;
         lastTFTSec = 255;
       }
 
-      if (currentMenu == 0) {
-        renderTFTTime(now);
-      } else if (currentMenu == 1) {
-        renderTFTEEG();
-      } else if (currentMenu == 2) {
-        renderTFTAlarm();
-      }
+      if (currentMenu == 0) renderTFTTime(now);
+      else if (currentMenu == 1) renderTFTEEG();
+      else if (currentMenu == 2) renderTFTAlarm();
+      else if (currentMenu == 3) renderTFTBLE();
+      else if (currentMenu == 4) renderTFTSDPlayer();
     }
   }
 
-  // 10. Render active menu on 0.96" OLED Display
-  if (oledAvailable) {
+  static unsigned long lastOLEDRenderMs = 0;
+  if (oledAvailable && (millis() - lastOLEDRenderMs >= 200)) {
+    lastOLEDRenderMs = millis();
     oledDisplay.clearDisplay();
     if (alarmRinging) {
       renderOLEDAlarmRinging(now);
@@ -1253,11 +1443,12 @@ void loop() {
       if (currentMenu == 0) renderMenuTime(now);
       else if (currentMenu == 1) renderMenuEEG();
       else if (currentMenu == 2) renderMenuAlarm();
+      else if (currentMenu == 3) renderMenuBLE();
+      else if (currentMenu == 4) renderMenuSDPlayer();
     }
     oledDisplay.display();
   }
 
-  // 11. Serial Output Stream
   static unsigned long lastSerialPrint = 0;
   if (millis() - lastSerialPrint >= 1000) {
     lastSerialPrint = millis();
