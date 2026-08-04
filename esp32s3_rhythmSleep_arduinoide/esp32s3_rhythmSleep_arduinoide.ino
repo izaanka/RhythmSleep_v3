@@ -318,18 +318,31 @@ void initAudioSpeaker() {
   digitalWrite(USB_AUDIO_DN_PIN, LOW);
 
   // Attach LEDC timer for non-blocking hardware tone generation on GPIO 20
-  ledcSetup(LEDC_AUDIO_CH, 440, 8); // 8-bit PWM at 440 Hz
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 3)
+  ledcAttach(USB_AUDIO_DP_PIN, 440, 8);
+  ledcWrite(USB_AUDIO_DP_PIN, 0);
+#else
+  ledcSetup(LEDC_AUDIO_CH, 440, 8);
   ledcAttachPin(USB_AUDIO_DP_PIN, LEDC_AUDIO_CH);
-  ledcWrite(LEDC_AUDIO_CH, 0); // Silence
+  ledcWrite(LEDC_AUDIO_CH, 0);
+#endif
 
   Serial.println("[AUDIO SUCCESS] Hardware LEDC Audio initialized on GPIO 20 (D+) & GPIO 19 (D-).");
 }
 
 void playTone(uint32_t freq) {
   if (freq == 0) {
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 3)
+    ledcWrite(USB_AUDIO_DP_PIN, 0);
+#else
     ledcWrite(LEDC_AUDIO_CH, 0);
+#endif
   } else {
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 3)
+    ledcWriteTone(USB_AUDIO_DP_PIN, freq);
+#else
     ledcWriteTone(LEDC_AUDIO_CH, freq);
+#endif
   }
 }
 
