@@ -468,13 +468,13 @@ void wakeUpDisplay() {
 }
 
 // ===================================================================
-// OLED Rendering Functions (5 Menus)
+// OLED Rendering Functions (3 Menus)
 // ===================================================================
 
 void renderMenuTime(const DateTime &now) {
   oledDisplay.setTextSize(1);
   oledDisplay.setCursor(0, 0);
-  oledDisplay.print("[1/5] TIME & DATE");
+  oledDisplay.print("[1/3] TIME & DATE");
   oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
 
   char timeBuffer[10];
@@ -499,7 +499,7 @@ void renderMenuTime(const DateTime &now) {
 void renderMenuEEG() {
   oledDisplay.setTextSize(1);
   oledDisplay.setCursor(0, 0);
-  oledDisplay.print("[2/5] EEG & NEURAL AI");
+  oledDisplay.print("[2/3] EEG & NEURAL AI");
   oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
 
   oledDisplay.setCursor(0, 15);
@@ -522,7 +522,7 @@ void renderMenuEEG() {
 void renderMenuAlarm() {
   oledDisplay.setTextSize(1);
   oledDisplay.setCursor(0, 0);
-  oledDisplay.print("[3/5] SMART ALARM");
+  oledDisplay.print("[3/3] SMART ALARM");
   oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
 
   oledDisplay.setCursor(0, 16);
@@ -551,50 +551,6 @@ void renderMenuAlarm() {
     oledDisplay.print("UP/DN:(5m) SEL:Next");
   } else {
     oledDisplay.print("SEL:Edit UP/DN:Tgl");
-  }
-}
-
-void renderMenuBLE() {
-  oledDisplay.setTextSize(1);
-  oledDisplay.setCursor(0, 0);
-  oledDisplay.print("[4/5] BLE & WIRELESS");
-  oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
-
-  oledDisplay.setCursor(0, 16);
-  oledDisplay.print("Device: RhythmSleep");
-
-  oledDisplay.setCursor(0, 28);
-  oledDisplay.printf("Status: %s", bleConnected ? "CONNECTED" : "ADVERTISING");
-
-  oledDisplay.drawFastHLine(0, 40, 128, SSD1306_WHITE);
-
-  oledDisplay.setCursor(0, 45);
-  oledDisplay.print("SEL: Test Sound Tone");
-  oledDisplay.setCursor(0, 55);
-  oledDisplay.print("UP/DN: Change Pitch");
-}
-
-void renderMenuSDPlayer() {
-  oledDisplay.setTextSize(1);
-  oledDisplay.setCursor(0, 0);
-  oledDisplay.print("[5/5] SD MUSIC PLAYER");
-  oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
-
-  if (sdFileCount == 0) {
-    oledDisplay.setCursor(0, 25);
-    oledDisplay.print(sdAvailable ? "No audio files found!" : "SD Card NOT mounted");
-  } else {
-    oledDisplay.setCursor(0, 16);
-    oledDisplay.printf("File %d/%d:", selectedFileIdx + 1, sdFileCount);
-    oledDisplay.setCursor(0, 28);
-    oledDisplay.print(sdFileList[selectedFileIdx].substring(0, 20));
-
-    oledDisplay.drawFastHLine(0, 40, 128, SSD1306_WHITE);
-
-    oledDisplay.setCursor(0, 45);
-    oledDisplay.printf("Status: %s", musicPlaying ? "PLAYING TONE" : "STOPPED");
-    oledDisplay.setCursor(0, 55);
-    oledDisplay.print("UP/DN:Scroll SEL:Play");
   }
 }
 
@@ -662,7 +618,7 @@ void renderTFTTime(const DateTime &now) {
     tftDisplay.setTextColor(ST7789_CYAN);
     tftDisplay.setTextSize(2);
     tftDisplay.setCursor(10, 10);
-    tftDisplay.print("RhythmSleep [1/5] TIME");
+    tftDisplay.print("RhythmSleep [1/3] TIME");
     tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
   }
 
@@ -698,7 +654,7 @@ void renderTFTEEG() {
     tftDisplay.setTextColor(ST7789_CYAN);
     tftDisplay.setTextSize(2);
     tftDisplay.setCursor(10, 10);
-    tftDisplay.print("RhythmSleep [2/5] EEG AI");
+    tftDisplay.print("RhythmSleep [2/3] EEG AI");
     tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
     lastTFTSec = 0;
   }
@@ -739,7 +695,7 @@ void renderTFTAlarm() {
     tftDisplay.setTextColor(ST7789_CYAN);
     tftDisplay.setTextSize(2);
     tftDisplay.setCursor(10, 10);
-    tftDisplay.print("RhythmSleep [3/5] SMART ALARM");
+    tftDisplay.print("RhythmSleep [3/3] SMART ALARM");
     tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
     lastTFTSec = 0;
   }
@@ -776,82 +732,6 @@ void renderTFTAlarm() {
   tftDisplay.setTextSize(1);
   tftDisplay.setCursor(10, 155);
   tftDisplay.print("Press OK (SELECT) button to edit/turn off alarm");
-
-  digitalWrite(TFT_CS, HIGH);
-}
-
-void renderTFTBLE() {
-  digitalWrite(SD_CS_PIN, HIGH);
-  digitalWrite(TFT_CS, LOW);
-
-  if (lastTFTSec == 255) {
-    tftDisplay.setTextColor(ST7789_CYAN);
-    tftDisplay.setTextSize(2);
-    tftDisplay.setCursor(10, 10);
-    tftDisplay.print("RhythmSleep [4/5] BLE AUDIO");
-    tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
-    lastTFTSec = 0;
-  }
-
-  tftDisplay.setTextSize(2);
-  tftDisplay.setTextColor(ST7789_WHITE, ST7789_BLACK);
-  tftDisplay.setCursor(10, 50);
-  tftDisplay.print("BLE Name: RhythmSleep_AI");
-
-  tftDisplay.setCursor(10, 85);
-  tftDisplay.print("Status  : ");
-  tftDisplay.setTextColor(bleConnected ? ST7789_GREEN : ST7789_YELLOW, ST7789_BLACK);
-  tftDisplay.print(bleConnected ? "CONNECTED   " : "ADVERTISING ");
-
-  tftDisplay.setTextColor(ST7789_WHITE, ST7789_BLACK);
-  tftDisplay.setCursor(10, 120);
-  tftDisplay.print("Audio Out: GPIO 20/19 LEDC");
-
-  tftDisplay.setTextColor(ST7789_LIGHTGRAY, ST7789_BLACK);
-  tftDisplay.setTextSize(1);
-  tftDisplay.setCursor(10, 155);
-  tftDisplay.print("Press SELECT to play test audio tone");
-
-  digitalWrite(TFT_CS, HIGH);
-}
-
-void renderTFTSDPlayer() {
-  digitalWrite(SD_CS_PIN, HIGH);
-  digitalWrite(TFT_CS, LOW);
-
-  if (lastTFTSec == 255) {
-    tftDisplay.setTextColor(ST7789_CYAN);
-    tftDisplay.setTextSize(2);
-    tftDisplay.setCursor(10, 10);
-    tftDisplay.print("RhythmSleep [5/5] SD PLAYER");
-    tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
-    lastTFTSec = 0;
-  }
-
-  tftDisplay.setTextSize(2);
-  if (sdFileCount == 0) {
-    tftDisplay.setTextColor(ST7789_RED, ST7789_BLACK);
-    tftDisplay.setCursor(10, 60);
-    tftDisplay.print(sdAvailable ? "No files found on SD!" : "SD Card Mount Error!");
-  } else {
-    tftDisplay.setTextColor(ST7789_YELLOW, ST7789_BLACK);
-    tftDisplay.setCursor(10, 50);
-    tftDisplay.printf("Track %d of %d:", selectedFileIdx + 1, sdFileCount);
-
-    tftDisplay.setTextColor(ST7789_WHITE, ST7789_BLACK);
-    tftDisplay.setCursor(10, 80);
-    tftDisplay.printf("> %-22s", sdFileList[selectedFileIdx].c_str());
-
-    tftDisplay.setCursor(10, 115);
-    tftDisplay.print("State: ");
-    tftDisplay.setTextColor(musicPlaying ? ST7789_GREEN : ST7789_LIGHTGRAY, ST7789_BLACK);
-    tftDisplay.print(musicPlaying ? "PLAYING TONE  " : "STOPPED       ");
-
-    tftDisplay.setTextColor(ST7789_LIGHTGRAY, ST7789_BLACK);
-    tftDisplay.setTextSize(1);
-    tftDisplay.setCursor(10, 155);
-    tftDisplay.print("UP/DN: Scroll Tracks | SELECT: Play/Stop");
-  }
 
   digitalWrite(TFT_CS, HIGH);
 }
@@ -1149,7 +1029,7 @@ void handleButtonActions() {
 
   if (btn1) {
     alarmEditField = 0;
-    currentMenu = (currentMenu + 1) % 5; // Cycle through 5 Menus
+    currentMenu = (currentMenu + 1) % 3; // 0: Time, 1: EEG AI, 2: Smart Alarm
     lastTFTMenu = 255;
   }
 
@@ -1177,27 +1057,6 @@ void handleButtonActions() {
         case 4: alarmCfg.endMin    = (alarmCfg.endMin == 0) ? 55 : alarmCfg.endMin - 5; break;
         case 5: alarmCfg.enabled   = !alarmCfg.enabled; break;
         default: alarmCfg.enabled  = false; break;
-      }
-    }
-  }
-  else if (currentMenu == 3) { // Menu 3: BLE Audio Control
-    if (btn4) { // SELECT plays test tone
-      static bool testToneState = false;
-      testToneState = !testToneState;
-      playTone(testToneState ? 440 : 0);
-    }
-  }
-  else if (currentMenu == 4) { // Menu 4: SD Music Player
-    if (sdFileCount > 0) {
-      if (btn2) { // UP
-        selectedFileIdx = (selectedFileIdx + 1) % sdFileCount;
-      }
-      if (btn3) { // DOWN
-        selectedFileIdx = (selectedFileIdx == 0) ? sdFileCount - 1 : selectedFileIdx - 1;
-      }
-      if (btn4) { // SELECT
-        musicPlaying = !musicPlaying;
-        playTone(musicPlaying ? 880 : 0);
       }
     }
   }
@@ -1441,8 +1300,6 @@ void loop() {
       if (currentMenu == 0) renderTFTTime(now);
       else if (currentMenu == 1) renderTFTEEG();
       else if (currentMenu == 2) renderTFTAlarm();
-      else if (currentMenu == 3) renderTFTBLE();
-      else if (currentMenu == 4) renderTFTSDPlayer();
     }
   }
 
@@ -1456,8 +1313,6 @@ void loop() {
       if (currentMenu == 0) renderMenuTime(now);
       else if (currentMenu == 1) renderMenuEEG();
       else if (currentMenu == 2) renderMenuAlarm();
-      else if (currentMenu == 3) renderMenuBLE();
-      else if (currentMenu == 4) renderMenuSDPlayer();
     }
     oledDisplay.display();
   }
