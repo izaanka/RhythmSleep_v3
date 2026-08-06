@@ -1,0 +1,9 @@
+# Node.js dependencies & local server data
+node_modules/
+server/node_modules/
+server/data/store.json
+
+# Build & OS artifacts
+*.bin
+*.elf
+.DS_Store
