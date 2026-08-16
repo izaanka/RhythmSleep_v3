@@ -156,17 +156,17 @@ document.addEventListener('DOMContentLoaded', () => {
       );
 
       if (isConfirmedSleep) {
-        bannerTitle.textContent = `🌙 ${latestState.stage} in Progress...`;
-        bannerSub.textContent = `Confirmed sleeping state (${latestState.stage}, ${(latestState.certainty || 90).toFixed(0)}% AI confidence). Recording sleep telemetry.`;
+        bannerTitle.textContent = `${latestState.stage} in Progress...`;
+        bannerSub.textContent = `Confirmed sleeping state (${latestState.stage}, ${(latestState.certainty || 90).toFixed(0)}% confidence). Recording sleep telemetry.`;
       } else {
-        bannerTitle.textContent = '🧘 Pre-Sleep Monitoring (Awake)';
+        bannerTitle.textContent = 'Pre-Sleep Monitoring (Awake)';
         bannerSub.textContent = 'Tracking session active. Monitoring brainwaves — "Sleep in Progress" will activate automatically as soon as sleep is detected.';
       }
       btnForceComplete.classList.remove('hidden');
       if (btnStartSession) btnStartSession.classList.add('hidden');
     } else {
       sessionStatusBanner.className = 'session-banner banner-completed';
-      bannerTitle.textContent = '✨ Device Ready / Sleep Idle';
+      bannerTitle.textContent = 'Device Ready / Sleep Idle';
       bannerSub.textContent = 'ESP32 is connected in IDLE mode. Start sleep tracking on your ESP32 (press OK on Menu 1) or click below to begin session.';
       btnForceComplete.classList.add('hidden');
       if (btnStartSession) btnStartSession.classList.remove('hidden');
@@ -275,11 +275,9 @@ document.addEventListener('DOMContentLoaded', () => {
     else bandName = 'Gamma (High Cognitive)';
     if (liveEegBand) liveEegBand.textContent = bandName;
 
-    const icons = { 'Awake': '☀️', 'WAKE': '☀️', 'Light Sleep': '🌙', 'Deep Sleep': '😴', 'REM Sleep': '✨' };
     const stage = neuralState.stage || 'Awake';
-    if (liveStageIcon) liveStageIcon.textContent = icons[stage] || '🔮';
     if (liveStageName) liveStageName.textContent = stage;
-    if (liveStageConf) liveStageConf.textContent = `${(neuralState.certainty || 0).toFixed(0)}% AI Confidence`;
+    if (liveStageConf) liveStageConf.textContent = `${(neuralState.certainty || 0).toFixed(0)}% Confidence`;
 
     // 90% Sleep Ratio & 60m Duration Qualification Counter
     if (qualification && activeSession) {
@@ -359,7 +357,7 @@ document.addEventListener('DOMContentLoaded', () => {
             updateSessionStatusUI(msg.data.activeSession, completedSessionsStore, msg.data.neuralState);
           }
         } else if (msg.type === 'SESSION_COMPLETED') {
-          showMessage('🎉 Qualified Sleep Session Complete! Report logged.');
+          showMessage('Qualified Sleep Session Complete! Report logged.');
           fetchSessions();
         } else if (msg.type === 'SESSION_DISCARDED') {
           showMessage(msg.data.message || 'Session discarded (Did not meet 90% sleep waves or 60m duration).', true);
@@ -438,7 +436,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!serialTerminalWindow) return;
       const text = serialTerminalWindow.innerText;
       navigator.clipboard.writeText(text).then(() => {
-        showMessage('📋 Serial log lines copied to clipboard!');
+        showMessage('Serial log lines copied to clipboard!');
       }).catch(err => {
         showMessage('Failed to copy to clipboard.', true);
       });

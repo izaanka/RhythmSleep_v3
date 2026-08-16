@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RhythmSleep AI - Completed Sleep Analysis & Telemetry</title>
+  <title>RhythmSleep - Telemetry Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -15,10 +15,10 @@
     <!-- Header -->
     <header class="app-header">
       <div class="logo-group">
-        <div class="logo-icon">🧠</div>
+        <div class="logo-icon">RS</div>
         <div>
-          <h1>RhythmSleep <span class="accent-text">AI</span></h1>
-          <p class="subtitle">Neural Network Sleep Analysis & Session Report</p>
+          <h1>RhythmSleep <span class="accent-text">Telemetry</span></h1>
+          <p class="subtitle">System Status & Sleep Analysis Dashboard</p>
         </div>
       </div>
       <div class="server-badge">
@@ -28,11 +28,11 @@
     </header>
 
     <!-- Real-Time Neural Network State Card -->
-    <div class="glass-card mb-4 card-neural-state">
+    <div class="solid-card mb-4 card-neural-state">
       <div class="card-header">
         <div class="neural-header-title">
-          <h3>🧠 Real-Time Neural Network State</h3>
-          <span class="badge badge-normal">Live Telemetry</span>
+          <h3>Real-Time Neural Network State</h3>
+          <span class="badge badge-normal">Live</span>
         </div>
         <div class="neural-freq-badge">
           <span>Peak Freq: <strong id="live-dominant-freq">0.00 Hz</strong></span>
@@ -43,14 +43,11 @@
       <div class="card-body">
         <div class="neural-top-row">
           <div class="neural-stage-badge">
-            <span class="stage-icon" id="live-stage-icon">🔮</span>
-            <div>
-              <div class="stage-name" id="live-stage-name">Awake State</div>
-              <div class="stage-conf" id="live-stage-conf">95% AI Confidence</div>
-            </div>
+            <div class="stage-name" id="live-stage-name">Awake State</div>
+            <div class="stage-conf" id="live-stage-conf">95% Confidence</div>
           </div>
           <div class="session-timer-badge">
-            <span class="label">Sleep Duration Filter:</span>
+            <span class="label">Qualification Filter</span>
             <span class="value" id="live-session-timer">0m logged / 60m min threshold</span>
           </div>
         </div>
@@ -85,18 +82,17 @@
     <div id="session-status-banner" class="session-banner banner-in-progress">
       <div class="banner-content">
         <div class="status-indicator">
-          <span class="pulsing-moon">🌙</span>
           <div>
             <h2 id="banner-title">Sleep Tracking in Progress...</h2>
-            <p id="banner-sub">Your complete Sleep Hypnogram and Analysis report will unlock automatically as soon as you complete your sleep session (turn off smart alarm).</p>
+            <p id="banner-sub">Session is actively recording. Hypnogram will be generated upon session completion.</p>
           </div>
         </div>
         <div class="banner-actions">
           <button id="btn-start-session" class="btn btn-primary hidden">
-            <span>🌙 Start Sleep Tracking Session</span>
+            Start Tracking Session
           </button>
           <button id="btn-force-complete" class="btn btn-primary hidden">
-            <span>✨ Complete Session & Unlock Report</span>
+            Complete Session
           </button>
         </div>
       </div>
@@ -106,9 +102,9 @@
     <div id="completed-report-section" class="completed-section">
       <!-- Session Selector & Title -->
       <div class="report-header-bar">
-        <h2>📊 Completed Sleep Session Report</h2>
+        <h2>Completed Session Report</h2>
         <div class="session-select-wrapper">
-          <label>Select Session History:</label>
+          <label>History:</label>
           <select id="session-history-select" class="custom-select">
             <option value="latest">Latest Session</option>
           </select>
@@ -117,36 +113,32 @@
 
       <div class="grid-4 mt-3">
         <!-- Sleep Score Card -->
-        <div class="glass-card metric-card">
-          <div class="metric-icon">🏆</div>
+        <div class="solid-card metric-card">
+          <div class="metric-header">Quality Score</div>
           <div class="metric-val" id="metric-score">--</div>
-          <div class="metric-label">Sleep Quality Score</div>
         </div>
         <!-- Total Duration Card -->
-        <div class="glass-card metric-card">
-          <div class="metric-icon">⏱️</div>
+        <div class="solid-card metric-card">
+          <div class="metric-header">Total Duration</div>
           <div class="metric-val" id="metric-duration">--</div>
-          <div class="metric-label">Total Sleep Duration</div>
         </div>
         <!-- Deep Sleep % Card -->
-        <div class="glass-card metric-card">
-          <div class="metric-icon">🌙</div>
+        <div class="solid-card metric-card">
+          <div class="metric-header">Deep Sleep Ratio</div>
           <div class="metric-val" id="metric-deep">--%</div>
-          <div class="metric-label">Deep Sleep Ratio</div>
         </div>
         <!-- Light / REM % Card -->
-        <div class="glass-card metric-card">
-          <div class="metric-icon">✨</div>
+        <div class="solid-card metric-card">
+          <div class="metric-header">REM / Light Ratio</div>
           <div class="metric-val" id="metric-rem">--%</div>
-          <div class="metric-label">REM / Light Sleep Ratio</div>
         </div>
       </div>
 
       <!-- Completed Sleep Hypnogram Chart -->
-      <div class="glass-card mt-4 col-span-2">
+      <div class="solid-card mt-4 col-span-2">
         <div class="card-header">
-          <h3>📊 Completed Sleep Hypnogram & Stage Timeline</h3>
-          <span class="badge badge-normal">Completed Session</span>
+          <h3>Sleep Hypnogram Timeline</h3>
+          <span class="badge badge-normal">Completed</span>
         </div>
         <div class="card-body chart-container">
           <canvas id="hypnogramChart"></canvas>
@@ -154,28 +146,28 @@
       </div>
 
       <!-- Live ESP32 Serial Monitor & Terminal Console -->
-      <div class="glass-card mt-4 col-span-2 card-serial-terminal">
+      <div class="solid-card mt-4 col-span-2 card-serial-terminal">
         <div class="card-header">
           <div class="terminal-title-group">
-            <h3>💻 Live ESP32 Serial Monitor & Terminal Console</h3>
-            <span id="serial-status-badge" class="badge badge-disconnected">Connecting Serial...</span>
+            <h3>Live Serial Console</h3>
+            <span id="serial-status-badge" class="badge badge-disconnected">Connecting...</span>
           </div>
           <div class="terminal-actions">
-            <input type="text" id="serial-filter-input" placeholder="🔍 Filter logs..." class="custom-input-sm">
+            <input type="text" id="serial-filter-input" placeholder="Filter logs..." class="custom-input-sm">
             <label class="checkbox-label">
               <input type="checkbox" id="serial-autoscroll" checked> Auto-Scroll
             </label>
-            <button id="btn-clear-terminal" class="btn btn-sm btn-warning">🧹 Clear</button>
-            <button id="btn-copy-terminal" class="btn btn-sm btn-primary">📋 Copy</button>
+            <button id="btn-clear-terminal" class="btn btn-sm btn-secondary">Clear</button>
+            <button id="btn-copy-terminal" class="btn btn-sm btn-secondary">Copy</button>
           </div>
         </div>
         <div class="card-body">
           <div id="serial-terminal-window" class="terminal-window">
-            <div class="terminal-line system-line">[SYSTEM] Terminal initialized. Streaming ESP32 serial logs @ 115200 baud...</div>
+            <div class="terminal-line system-line">[SYSTEM] Terminal initialized. Streaming logs...</div>
           </div>
           <div class="terminal-input-bar mt-2">
-            <input type="text" id="serial-cmd-input" placeholder="Type serial command (e.g. 06/08/2026-15:10:00)..." class="custom-input">
-            <button id="btn-send-serial-cmd" class="btn btn-primary"><span>Send Command</span></button>
+            <input type="text" id="serial-cmd-input" placeholder="Type command..." class="custom-input">
+            <button id="btn-send-serial-cmd" class="btn btn-primary">Send</button>
           </div>
         </div>
       </div>
@@ -184,44 +176,44 @@
     <!-- Secondary Grid: Device Info & EEG Spectral Power -->
     <div class="grid-2 mt-4">
       <!-- Paired Device Info Card -->
-      <div class="glass-card card-device">
+      <div class="solid-card card-device">
         <div class="card-header">
-          <h3>⚡ Paired ESP32 System</h3>
+          <h3>Paired Device</h3>
           <span id="pairing-status-badge" class="badge badge-disconnected">Unpaired</span>
         </div>
         <div class="card-body">
           <div class="info-row">
-            <span class="label">MAC Address:</span>
+            <span class="label">MAC Address</span>
             <span class="value mono" id="device-mac">--:--:--:--:--:--</span>
           </div>
           <div class="info-row">
-            <span class="label">Device IP:</span>
+            <span class="label">IP Address</span>
             <span class="value mono" id="device-ip">---.---.---.---</span>
           </div>
           <div class="info-row">
-            <span class="label">Pairing Token:</span>
+            <span class="label">Pairing Token</span>
             <span class="value mono" id="device-token">NONE</span>
           </div>
           <div class="info-row">
-            <span class="label">Last Heartbeat:</span>
+            <span class="label">Last Heartbeat</span>
             <span class="value" id="device-last-seen">Never</span>
           </div>
         </div>
       </div>
 
       <!-- Device Control & Factory Reset Panel -->
-      <div class="glass-card card-controls">
+      <div class="solid-card card-controls">
         <div class="card-header">
-          <h3>🛠️ Device Management</h3>
+          <h3>System Management</h3>
         </div>
         <div class="card-body">
-          <p class="desc-text">Manage paired ESP32 connection or perform a full factory reset to clear pairing memory and sleep logs.</p>
+          <p class="desc-text" style="font-size: 0.85rem; color: var(--text-muted);">Manage ESP32 connection or perform a full factory reset.</p>
           <div class="btn-group mt-3">
-            <button id="btn-unpair" class="btn btn-warning">
-              <span>🔌 Unpair ESP32</span>
+            <button id="btn-unpair" class="btn btn-secondary">
+              Unpair Device
             </button>
             <button id="btn-factory-reset" class="btn btn-danger">
-              <span>⚠️ Factory Reset Server</span>
+              Factory Reset
             </button>
           </div>
           <div id="action-message" class="action-message hidden"></div>
