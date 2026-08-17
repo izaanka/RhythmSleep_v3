@@ -28,29 +28,34 @@
 
 // --- Pin Definitions ---
 #define SDA_PIN        8
-#define SCL_PIN        9
-#define ANALOG_EEG_PIN 1
+#define SCL_PIN        7
+#define ANALOG_EEG_PIN 14
 
 // 4 Physical Buttons (Active LOW with internal pull-ups)
-#define BTN_MENU_PIN   4
-#define BTN_UP_PIN     5
-#define BTN_DOWN_PIN   6
-#define BTN_SELECT_PIN 7  // OK / SELECT Button
+#define BTN_MENU_PIN   10 // BACK / MENU Button
+#define BTN_UP_PIN     11 // UP Button
+#define BTN_DOWN_PIN   12 // DOWN Button
+#define BTN_SELECT_PIN 9  // SELECT / OK Button
 
 // --- Haptic Vibration Motor Pin ---
 #define PIN_VIBRATION  21
 
 // --- ST7789 2.8" TFT Display Pins ---
-#define TFT_MOSI       11
-#define TFT_SCLK       12
-#define TFT_MISO       13
+#define TFT_MOSI       4   // Shared SPI MOSI
+#define TFT_SCLK       3   // Shared SPI Clock
+#define TFT_MISO       2   // Shared SPI MISO
 #define TFT_CS         38  // Chip Select for ST7789 Display
 #define TFT_DC         39  // Data / Command Pin
 #define TFT_RST        40  // Reset Pin
 #define TFT_BLK        48  // Backlight LED Control Pin
 
-// --- SD Card Module Pin ---
-#define SD_CS_PIN      10  // Chip Select for SD Card Module
+// --- SD Card Module Pins ---
+#define SD_VCC_PIN     6   // Driven HIGH by code
+#define SD_GND_PIN     1   // Driven LOW by code
+#define SD_CS_PIN      5   // Chip Select for SD Card Module
+#define SPI_MOSI_PIN   4
+#define SPI_SCLK_PIN   3
+#define SPI_MISO_PIN   2
 
 // --- Audio Speaker Pins ---
 #define USB_AUDIO_DP_PIN 20  // Speaker D+
@@ -426,6 +431,12 @@ void scanSDFiles() {
 }
 
 void checkSDCardDetection() {
+  pinMode(SD_VCC_PIN, OUTPUT);
+  digitalWrite(SD_VCC_PIN, HIGH);
+  pinMode(SD_GND_PIN, OUTPUT);
+  digitalWrite(SD_GND_PIN, LOW);
+  delay(50);
+
   pinMode(SD_CS_PIN, OUTPUT);
   digitalWrite(SD_CS_PIN, HIGH);
   pinMode(TFT_CS, OUTPUT);
@@ -433,7 +444,7 @@ void checkSDCardDetection() {
 
   delay(20);
 
-  SPI.begin(TFT_SCLK, TFT_MISO, TFT_MOSI, SD_CS_PIN);
+  SPI.begin(SPI_SCLK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, SD_CS_PIN);
 
   digitalWrite(SD_CS_PIN, HIGH);
   for (int i = 0; i < 10; i++) {
