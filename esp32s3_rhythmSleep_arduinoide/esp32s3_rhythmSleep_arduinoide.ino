@@ -29,7 +29,7 @@
 // --- Pin Definitions ---
 #define SDA_PIN        8
 #define SCL_PIN        7
-#define ANALOG_EEG_PIN 14
+#define ANALOG_EEG_PIN 9
 
 // 4 Physical Buttons (Active LOW with internal pull-ups)
 #define BTN_UP_PIN     13 // UP Button (GPIO 13)
