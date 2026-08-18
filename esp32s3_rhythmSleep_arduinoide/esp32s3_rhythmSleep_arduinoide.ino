@@ -876,22 +876,28 @@ void setupWebServerRoutes() {
     html += "input,select{width:100%;padding:12px;margin:8px 0;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#fff;box-sizing:border-box}";
     html += "input[type=submit]{background:#00f2fe;color:#000;font-weight:bold;cursor:pointer}</style></head><body>";
     html += "<h2>🧠 RhythmSleep WiFi Setup</h2>";
-    html += "<p>Configure ESP32 Wi-Fi connection</p>";
+    html += "<p>Configure ESP32 Wi-Fi Connection</p>";
     html += "<form action='/save' method='POST'>";
-    html += "<label>Select Wi-Fi Network:</label><br>";
     
-    int n = WiFi.scanNetworks();
-    if (n > 0) {
-      html += "<select name='ssid_select' onchange='document.getElementById(\"ssid\").value=this.value'>";
+    int n = WiFi.scanComplete();
+    if (n == -2) {
+      WiFi.scanNetworks(true);
+    } else if (n > 0) {
+      html += "<label>Scanned Networks:</label><br>";
+      html += "<select onchange='document.getElementById(\"ssid\").value=this.value'>";
       html += "<option value=''>-- Select Network --</option>";
       for (int i = 0; i < n; ++i) {
         html += "<option value='" + WiFi.SSID(i) + "'>" + WiFi.SSID(i) + " (" + String(WiFi.RSSI(i)) + " dBm)</option>";
       }
       html += "</select><br>";
+      WiFi.scanDelete();
+      WiFi.scanNetworks(true);
     }
 
-    html += "<input type='text' id='ssid' name='ssid' placeholder='SSID' required><br>";
-    html += "<input type='password' name='pass' placeholder='Password'><br>";
+    html += "<label>Wi-Fi Name (SSID):</label><br>";
+    html += "<input type='text' id='ssid' name='ssid' placeholder='Enter SSID' required><br>";
+    html += "<label>Wi-Fi Password:</label><br>";
+    html += "<input type='password' name='pass' placeholder='Enter Password'><br>";
     html += "<input type='submit' value='Save & Connect'>";
     html += "</form></body></html>";
 
@@ -931,8 +937,7 @@ void setupWebServerRoutes() {
   });
 
   webServer.onNotFound([serveRootHTML]() {
-    webServer.sendHeader("Location", "http://192.168.4.1/", true);
-    webServer.send(302, "text/plain", "");
+    serveRootHTML();
   });
 }
 
@@ -945,31 +950,7 @@ void initWiFiProvisioning() {
   isPaired  = preferences.getBool("is_paired", false);
   preferences.end();
 
-  if (wifiSSID.length() > 0) {
-    Serial.printf("[WIFI] Attempting connection to SSID: %s...\n", wifiSSID.c_str());
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
-
-    unsigned long startMs = millis();
-    while (WiFi.status() != WL_CONNECTED && (millis() - startMs < 12000)) {
-      delay(250);
-      Serial.print(".");
-    }
-    Serial.println();
-
-    if (WiFi.status() == WL_CONNECTED) {
-      isAPMode = false;
-      Serial.printf("[WIFI SUCCESS] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
-      udpSocket.begin(8888);
-      return;
-    } else {
-      Serial.println("[WIFI NOTICE] Connection failed/timed out. Switching to SoftAP Provisioning Mode.");
-    }
-  }
-
-  // Fallback to SoftAP Mode
-  isAPMode = true;
-  WiFi.mode(WIFI_AP);
+  WiFi.mode(WIFI_AP_STA);
   IPAddress apIP(192, 168, 4, 1);
   IPAddress netMask(255, 255, 255, 0);
   WiFi.softAPConfig(apIP, apIP, netMask);
@@ -979,15 +960,18 @@ void initWiFiProvisioning() {
   dnsServer.start(53, "*", apIP);
   setupWebServerRoutes();
   webServer.begin();
+  WiFi.scanNetworks(true);
   Serial.println("[WIFI AP ACTIVE] SoftAP active as 'RhythmSleep-Setup' at 192.168.4.1");
+
+  if (wifiSSID.length() > 0) {
+    Serial.printf("[WIFI STA] Attempting background connection to SSID: %s...\n", wifiSSID.c_str());
+    WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
+  }
 }
 
 void handlePairingAndTelemetry() {
-  if (isAPMode) {
-    dnsServer.processNextRequest();
-    webServer.handleClient();
-    return;
-  }
+  dnsServer.processNextRequest();
+  webServer.handleClient();
 
   if (WiFi.status() != WL_CONNECTED) return;
 
