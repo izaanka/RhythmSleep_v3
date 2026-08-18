@@ -1905,7 +1905,7 @@ void setup() {
   digitalWrite(SD_CS_PIN, HIGH);
   digitalWrite(TFT_CS, LOW);
   tftDisplay.init(240, 320);
-  tftDisplay.setRotation(1);
+  tftDisplay.setRotation(3); // Rotated 180 degrees
   tftDisplay.fillScreen(ST7789_BLACK);
   tftAvailable = true;
 
@@ -1926,6 +1926,7 @@ void setup() {
 
   if (oledDisplay.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR)) {
     oledAvailable = true;
+    oledDisplay.setRotation(2); // Rotated 180 degrees
     oledDisplay.clearDisplay();
     oledDisplay.setTextColor(SSD1306_WHITE);
     oledDisplay.setTextSize(1);
