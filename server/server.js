@@ -202,6 +202,11 @@ wss.on('connection', (ws) => {
   }));
 });
 
+// REST API: Get Server Time
+app.get('/api/time', (req, res) => {
+  res.json({ status: 'ok', server_time: Math.floor(Date.now() / 1000) });
+});
+
 // REST API: Get Serial Console Logs & Status
 app.get('/api/serial-logs', (req, res) => {
   res.json({
@@ -344,7 +349,7 @@ app.post('/api/sleep-data', (req, res) => {
     saveStore();
 
     broadcastWs('SESSION_COMPLETED', { completedSession });
-    return res.json({ status: 'ok', sessionState: 'COMPLETED', report: completedSession });
+    return res.json({ status: 'ok', sessionState: 'COMPLETED', server_time: Math.floor(Date.now() / 1000), report: completedSession });
   } else {
     const qual = evalSessionQualification(store.activeSession.logs);
     saveStore();
@@ -369,7 +374,7 @@ app.post('/api/sleep-data', (req, res) => {
       }
     });
 
-    return res.json({ status: 'ok', sessionState: 'IN_PROGRESS' });
+    return res.json({ status: 'ok', sessionState: 'IN_PROGRESS', server_time: Math.floor(Date.now() / 1000) });
   }
 });
 

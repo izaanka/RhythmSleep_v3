@@ -907,7 +907,16 @@ void setupWebServerRoutes() {
     webServer.send(200, "text/html", html);
   };
 
-  webServer.on("/", HTTP_GET, serveRootHTML);
+  webServer.on("/", HTTP_GET, [serveRootHTML]() {
+    if (!isAPMode && isPaired && serverIP.length() > 0) {
+      String target = "http://" + serverIP + ":3000/";
+      webServer.sendHeader("Location", target, true);
+      webServer.send(302, "text/plain", "Redirecting to Server @ " + target);
+      Serial.printf("[HTTP REDIRECT] Redirecting browser to Server: %s\n", target.c_str());
+    } else {
+      serveRootHTML();
+    }
+  });
   webServer.on("/generate_204", HTTP_GET, serveRootHTML);
   webServer.on("/gen_204", HTTP_GET, serveRootHTML);
   webServer.on("/hotspot-detect.html", HTTP_GET, serveRootHTML);
@@ -937,7 +946,13 @@ void setupWebServerRoutes() {
   });
 
   webServer.onNotFound([serveRootHTML]() {
-    serveRootHTML();
+    if (!isAPMode && isPaired && serverIP.length() > 0) {
+      String target = "http://" + serverIP + ":3000/";
+      webServer.sendHeader("Location", target, true);
+      webServer.send(302, "text/plain", "");
+    } else {
+      serveRootHTML();
+    }
   });
 }
 
@@ -998,6 +1013,8 @@ void initWiFiProvisioning() {
       isAPMode = false;
       Serial.printf("[WIFI SUCCESS] Connected! IP: %s (SoftAP Disabled)\n", WiFi.localIP().toString().c_str());
       udpSocket.begin(8888);
+      setupWebServerRoutes();
+      webServer.begin();
       return;
     } else {
       Serial.println("[WIFI NOTICE] Connection failed/timed out. Enabling password-protected SoftAP.");
@@ -1015,9 +1032,13 @@ void handlePairingAndTelemetry() {
     if (WiFi.status() == WL_CONNECTED) {
       stopSoftAP();
       udpSocket.begin(8888);
+      setupWebServerRoutes();
+      webServer.begin();
     }
     return;
   }
+
+  webServer.handleClient();
 
   if (WiFi.status() != WL_CONNECTED) {
     startSoftAP();
@@ -1107,6 +1128,13 @@ void handlePairingAndTelemetry() {
           sessionCompletedTrigger = false;
         }
         String resp = http.getString();
+        int timeIdx = resp.indexOf("\"server_time\":");
+        if (timeIdx != -1) {
+          uint32_t sTime = resp.substring(timeIdx + 14).toInt();
+          if (sTime > 1700000000 && rtcAvailable) {
+            rtc.adjust(DateTime(sTime));
+          }
+        }
         if (resp.indexOf("unpaired") != -1 || httpCode == 401) {
           Serial.println("[TELEMETRY UNPAIRED] Server returned unpaired status. Clearing pairing...");
           isPaired = false;
@@ -1142,8 +1170,8 @@ void renderMenuWiFiReset() {
   }
 
   oledDisplay.setCursor(0, 38);
-  if (isPaired) {
-    oledDisplay.printf("Server: PAIRED");
+  if (isPaired && serverIP.length() > 0) {
+    oledDisplay.printf("http://%s:3000", serverIP.c_str());
   } else {
     oledDisplay.print("Server: SEARCHING...");
   }
@@ -1185,12 +1213,12 @@ void renderTFTWiFiReset() {
   }
 
   tftDisplay.setCursor(10, 105);
-  if (isPaired) {
-    tftDisplay.setTextColor(ST7789_GREEN, ST7789_BLACK);
-    tftDisplay.printf("Server IP : %-14s", serverIP.c_str());
+  if (isPaired && serverIP.length() > 0) {
+    tftDisplay.setTextColor(ST7789_CYAN, ST7789_BLACK);
+    tftDisplay.printf("Server URL: http://%s:3000", serverIP.c_str());
   } else {
     tftDisplay.setTextColor(ST7789_YELLOW, ST7789_BLACK);
-    tftDisplay.print("Server    : SEARCHING    ");
+    tftDisplay.print("Server URL: SEARCHING...        ");
   }
 
   tftDisplay.fillRect(10, 140, 300, 38, ST7789_RED);
