@@ -25,6 +25,7 @@
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <math.h>
+#include <driver/rtc_io.h>
 
 // --- Pin Definitions ---
 #define SDA_PIN        8
@@ -1025,10 +1026,36 @@ void initWiFiProvisioning() {
   startSoftAP();
 }
 
+uint32_t unixTimeOffset = 0; // Difference between millis()/1000 and actual Unix Epoch time
+
+void setSystemUnixTime(uint32_t epoch) {
+  if (epoch > 1700000000) {
+    unixTimeOffset = epoch - (millis() / 1000);
+    if (rtcAvailable) {
+      rtc.adjust(DateTime(epoch));
+    }
+    Serial.printf("[TIME SYNC SUCCESS] System time set to Server Unix Epoch: %u\n", epoch);
+  }
+}
+
+DateTime getCurrentTime() {
+  if (rtcAvailable) {
+    return rtc.now();
+  }
+  if (unixTimeOffset > 0) {
+    uint32_t currentEpoch = (millis() / 1000) + unixTimeOffset;
+    return DateTime(currentEpoch);
+  }
+  return DateTime(2026, 8, 18, (millis()/3600000)%24, (millis()/60000)%60, (millis()/1000)%60);
+}
+
 void fetchServerTime() {
-  if (WiFi.status() == WL_CONNECTED && isPaired && serverIP.length() > 0) {
+  if (WiFi.status() == WL_CONNECTED) {
+    String host = (serverIP.length() > 0) ? serverIP : WiFi.gatewayIP().toString();
+    if (host.length() == 0 || host == "0.0.0.0") return;
+
     HTTPClient http;
-    String url = "http://" + serverIP + ":3000/api/time";
+    String url = "http://" + host + ":3000/api/time";
     http.begin(url);
     http.setTimeout(3000);
     int httpCode = http.GET();
@@ -1038,10 +1065,7 @@ void fetchServerTime() {
       if (timeIdx != -1) {
         String numStr = resp.substring(timeIdx + 14);
         uint32_t sTime = (uint32_t)numStr.toInt();
-        if (sTime > 1700000000 && rtcAvailable) {
-          rtc.adjust(DateTime(sTime));
-          Serial.printf("[TIME SYNC SUCCESS] RTC clock updated to Server Time: %u\n", sTime);
-        }
+        setSystemUnixTime(sTime);
       }
     }
     http.end();
@@ -1238,14 +1262,29 @@ void enterDeepSleep() {
           digitalRead(BTN_DOWN_PIN) == LOW || digitalRead(BTN_SELECT_PIN) == LOW) && (millis() - waitStart < 3000)) {
     delay(20);
   }
-  delay(150); // Additional debounce guard after button release
+  delay(300); // 300ms debounce guard after release
+
+  Serial.println("[POWER] Configuring RTC IO pullups for wake pins...");
+
+  // Enable RTC pull-ups on wake pins so they stay pulled HIGH (not floating LOW) during deep sleep
+  const gpio_num_t wakePins[] = { (gpio_num_t)BTN_UP_PIN, (gpio_num_t)BTN_SELECT_PIN, (gpio_num_t)BTN_DOWN_PIN, (gpio_num_t)BTN_MENU_PIN };
+  for (int i = 0; i < 4; i++) {
+    rtc_gpio_init(wakePins[i]);
+    rtc_gpio_set_direction(wakePins[i], RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en(wakePins[i]);
+    rtc_gpio_pulldown_dis(wakePins[i]);
+  }
+
+  // Keep RTC Peripherals powered so internal pull-ups remain active during Deep Sleep
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
 
   Serial.println("[POWER] Entering Deep Sleep. RTC clock remains active. Wake via any button press...");
 
   if (oledAvailable) {
-    oledDisplay.ssd1306_command(SSD1306_DISPLAYOFF);
     oledDisplay.clearDisplay();
     oledDisplay.display();
+    delay(10);
+    oledDisplay.ssd1306_command(SSD1306_DISPLAYOFF);
   }
   digitalWrite(TFT_BLK, LOW);
 
@@ -2173,16 +2212,17 @@ void loop() {
     displaySleeping = true;
     digitalWrite(TFT_BLK, LOW);
     if (oledAvailable) {
-      oledDisplay.ssd1306_command(SSD1306_DISPLAYOFF);
       oledDisplay.clearDisplay();
       oledDisplay.display();
+      delay(10);
+      oledDisplay.ssd1306_command(SSD1306_DISPLAYOFF);
     }
     Serial.println("[POWER] 15-Second Inactivity Timeout: TFT & OLED Displays Powered Down.");
   }
 
   updateFFT();
 
-  DateTime now = rtcAvailable ? rtc.now() : DateTime(2026, 8, 2, (millis()/3600000)%24, (millis()/60000)%60, (millis()/1000)%60);
+  DateTime now = getCurrentTime();
 
   updateSmartAlarm(now);
 
