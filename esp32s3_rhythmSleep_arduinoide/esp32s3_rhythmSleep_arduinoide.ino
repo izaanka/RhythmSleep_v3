@@ -869,7 +869,7 @@ void performFactoryReset() {
 }
 
 void setupWebServerRoutes() {
-  webServer.on("/", HTTP_GET, []() {
+  auto serveRootHTML = []() {
     String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>";
     html += "<title>RhythmSleep WiFi Setup</title>";
     html += "<style>body{font-family:sans-serif;background:#0f172a;color:#fff;padding:20px;text-align:center}";
@@ -895,8 +895,19 @@ void setupWebServerRoutes() {
     html += "<input type='submit' value='Save & Connect'>";
     html += "</form></body></html>";
 
+    webServer.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    webServer.sendHeader("Pragma", "no-cache");
+    webServer.sendHeader("Expires", "-1");
     webServer.send(200, "text/html", html);
-  });
+  };
+
+  webServer.on("/", HTTP_GET, serveRootHTML);
+  webServer.on("/generate_204", HTTP_GET, serveRootHTML);
+  webServer.on("/gen_204", HTTP_GET, serveRootHTML);
+  webServer.on("/hotspot-detect.html", HTTP_GET, serveRootHTML);
+  webServer.on("/connecttest.txt", HTTP_GET, serveRootHTML);
+  webServer.on("/redirect", HTTP_GET, serveRootHTML);
+  webServer.on("/canonical.html", HTTP_GET, serveRootHTML);
 
   webServer.on("/save", HTTP_POST, []() {
     String newSSID = webServer.arg("ssid");
@@ -919,7 +930,7 @@ void setupWebServerRoutes() {
     }
   });
 
-  webServer.onNotFound([]() {
+  webServer.onNotFound([serveRootHTML]() {
     webServer.sendHeader("Location", "http://192.168.4.1/", true);
     webServer.send(302, "text/plain", "");
   });
@@ -959,8 +970,13 @@ void initWiFiProvisioning() {
   // Fallback to SoftAP Mode
   isAPMode = true;
   WiFi.mode(WIFI_AP);
+  IPAddress apIP(192, 168, 4, 1);
+  IPAddress netMask(255, 255, 255, 0);
+  WiFi.softAPConfig(apIP, apIP, netMask);
   WiFi.softAP("RhythmSleep-Setup");
-  dnsServer.start(53, "*", WiFi.softAPIP());
+  delay(100);
+
+  dnsServer.start(53, "*", apIP);
   setupWebServerRoutes();
   webServer.begin();
   Serial.println("[WIFI AP ACTIVE] SoftAP active as 'RhythmSleep-Setup' at 192.168.4.1");
