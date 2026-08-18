@@ -1015,6 +1015,7 @@ void initWiFiProvisioning() {
       udpSocket.begin(8888);
       setupWebServerRoutes();
       webServer.begin();
+      fetchServerTime();
       return;
     } else {
       Serial.println("[WIFI NOTICE] Connection failed/timed out. Enabling password-protected SoftAP.");
@@ -1022,6 +1023,29 @@ void initWiFiProvisioning() {
   }
 
   startSoftAP();
+}
+
+void fetchServerTime() {
+  if (WiFi.status() == WL_CONNECTED && isPaired && serverIP.length() > 0) {
+    HTTPClient http;
+    String url = "http://" + serverIP + ":3000/api/time";
+    http.begin(url);
+    http.setTimeout(3000);
+    int httpCode = http.GET();
+    if (httpCode == 200) {
+      String resp = http.getString();
+      int timeIdx = resp.indexOf("\"server_time\":");
+      if (timeIdx != -1) {
+        String numStr = resp.substring(timeIdx + 14);
+        uint32_t sTime = (uint32_t)numStr.toInt();
+        if (sTime > 1700000000 && rtcAvailable) {
+          rtc.adjust(DateTime(sTime));
+          Serial.printf("[TIME SYNC SUCCESS] RTC clock updated to Server Time: %u\n", sTime);
+        }
+      }
+    }
+    http.end();
+  }
 }
 
 void handlePairingAndTelemetry() {
@@ -1088,6 +1112,7 @@ void handlePairingAndTelemetry() {
             preferences.end();
 
             Serial.printf("[PAIR SUCCESS] Saved Server IP: %s | Token: %s\n", serverIP.c_str(), pairToken.c_str());
+            fetchServerTime();
           }
         }
       }
@@ -1095,6 +1120,12 @@ void handlePairingAndTelemetry() {
   } 
   // Paired State: Send Telemetry POST to Server
   else {
+    static unsigned long lastTimeSyncMs = 0;
+    if (millis() - lastTimeSyncMs >= 60000 || lastTimeSyncMs == 0) {
+      lastTimeSyncMs = millis();
+      fetchServerTime();
+    }
+
     if (millis() - lastTelemetrySend >= 5000) {
       lastTelemetrySend = millis();
 
@@ -1130,7 +1161,7 @@ void handlePairingAndTelemetry() {
         String resp = http.getString();
         int timeIdx = resp.indexOf("\"server_time\":");
         if (timeIdx != -1) {
-          uint32_t sTime = resp.substring(timeIdx + 14).toInt();
+          uint32_t sTime = (uint32_t)resp.substring(timeIdx + 14).toInt();
           if (sTime > 1700000000 && rtcAvailable) {
             rtc.adjust(DateTime(sTime));
           }
@@ -1171,7 +1202,7 @@ void renderMenuWiFiReset() {
 
   oledDisplay.setCursor(0, 38);
   if (isPaired && serverIP.length() > 0) {
-    oledDisplay.printf("http://%s:3000", serverIP.c_str());
+    oledDisplay.printf("Srv: %s:3000", serverIP.c_str());
   } else {
     oledDisplay.print("Server: SEARCHING...");
   }
@@ -1256,10 +1287,10 @@ void renderTFTWiFiReset() {
   tftDisplay.setCursor(10, 105);
   if (isPaired && serverIP.length() > 0) {
     tftDisplay.setTextColor(ST7789_CYAN, ST7789_BLACK);
-    tftDisplay.printf("Server URL: http://%s:3000", serverIP.c_str());
+    tftDisplay.printf("Server IP : %s:3000        ", serverIP.c_str());
   } else {
     tftDisplay.setTextColor(ST7789_YELLOW, ST7789_BLACK);
-    tftDisplay.print("Server URL: SEARCHING...        ");
+    tftDisplay.print("Server IP : SEARCHING...        ");
   }
 
   tftDisplay.fillRect(10, 140, 300, 38, ST7789_RED);
