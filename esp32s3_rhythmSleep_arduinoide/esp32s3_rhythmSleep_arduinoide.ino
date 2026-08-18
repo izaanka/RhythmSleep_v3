@@ -32,10 +32,10 @@
 #define ANALOG_EEG_PIN 14
 
 // 4 Physical Buttons (Active LOW with internal pull-ups)
-#define BTN_MENU_PIN   10 // BACK / MENU Button
-#define BTN_UP_PIN     11 // UP Button
-#define BTN_DOWN_PIN   12 // DOWN Button
-#define BTN_SELECT_PIN 9  // SELECT / OK Button
+#define BTN_UP_PIN     13 // UP Button (GPIO 13)
+#define BTN_SELECT_PIN 10 // CLICK / SELECT Button (GPIO 10)
+#define BTN_DOWN_PIN   12 // DOWN Button (GPIO 12)
+#define BTN_MENU_PIN   11 // BACK / MENU Button (GPIO 11)
 
 // --- Haptic Vibration Motor Pin ---
 #define PIN_VIBRATION  21
@@ -88,8 +88,8 @@
 #define MAX_FREQ        100.0
 #define HISTORY_LEN     10
 
-// 1-Minute Backlight Timeout (60,000 milliseconds)
-#define DISPLAY_TIMEOUT_MS  60000
+// 15-Second Display Timeout (15,000 milliseconds)
+#define DISPLAY_TIMEOUT_MS  15000
 
 // 2-Minute Smart Alarm Rolling History Buffer (120 seconds)
 #define SMART_ALARM_WINDOW_SEC 120
@@ -515,7 +515,10 @@ void wakeUpDisplay() {
   if (displaySleeping) {
     displaySleeping = false;
     digitalWrite(TFT_BLK, HIGH);
-    Serial.println("[POWER] Display woken up by user interaction.");
+    if (oledAvailable) {
+      oledDisplay.ssd1306_command(SSD1306_DISPLAYON);
+    }
+    Serial.println("[POWER] TFT & OLED Displays woken up by user interaction.");
     lastTFTMenu = 255;
   }
 }
@@ -1975,7 +1978,12 @@ void loop() {
   if (!displaySleeping && !alarmRinging && (millis() - lastActivityMs >= DISPLAY_TIMEOUT_MS)) {
     displaySleeping = true;
     digitalWrite(TFT_BLK, LOW);
-    Serial.println("[POWER] 1-Minute Inactivity Timeout: TFT Backlight Powered Down.");
+    if (oledAvailable) {
+      oledDisplay.ssd1306_command(SSD1306_DISPLAYOFF);
+      oledDisplay.clearDisplay();
+      oledDisplay.display();
+    }
+    Serial.println("[POWER] 15-Second Inactivity Timeout: TFT & OLED Displays Powered Down.");
   }
 
   updateFFT();
@@ -2014,7 +2022,7 @@ void loop() {
   }
 
   static unsigned long lastOLEDRenderMs = 0;
-  if (oledAvailable && (millis() - lastOLEDRenderMs >= 200)) {
+  if (oledAvailable && !displaySleeping && (millis() - lastOLEDRenderMs >= 200)) {
     lastOLEDRenderMs = millis();
     oledDisplay.clearDisplay();
     if (alarmRinging) {
