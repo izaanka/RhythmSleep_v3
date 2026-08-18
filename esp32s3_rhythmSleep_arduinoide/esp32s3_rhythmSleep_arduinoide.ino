@@ -530,7 +530,7 @@ void wakeUpDisplay() {
 void renderMenuTime(const DateTime &now) {
   oledDisplay.setTextSize(1);
   oledDisplay.setCursor(0, 0);
-  oledDisplay.print("[1/5] TIME & DATE");
+  oledDisplay.print("[1/6] TIME & DATE");
   oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
 
   char timeBuffer[10];
@@ -555,7 +555,7 @@ void renderMenuTime(const DateTime &now) {
 void renderMenuEEG() {
   oledDisplay.setTextSize(1);
   oledDisplay.setCursor(0, 0);
-  oledDisplay.print("[2/5] EEG REAL-TIME");
+  oledDisplay.print("[2/6] EEG REAL-TIME");
   oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
 
   oledDisplay.setCursor(0, 15);
@@ -584,7 +584,7 @@ void renderMenuEEG() {
 void renderMenuNNStats() {
   oledDisplay.setTextSize(1);
   oledDisplay.setCursor(0, 0);
-  oledDisplay.print("[3/5] NEURAL AI STATS");
+  oledDisplay.print("[3/6] NEURAL AI STATS");
   oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
 
   int calcLearned = (nnLearningSessionsCount == 0) ? 15 : (nnLearningSessionsCount * 20);
@@ -608,7 +608,7 @@ void renderMenuNNStats() {
 void renderMenuAlarm() {
   oledDisplay.setTextSize(1);
   oledDisplay.setCursor(0, 0);
-  oledDisplay.print("[4/5] SMART ALARM");
+  oledDisplay.print("[4/6] SMART ALARM");
   oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
 
   oledDisplay.setCursor(0, 16);
@@ -1230,6 +1230,16 @@ void renderMenuDeepSleep() {
 }
 
 void enterDeepSleep() {
+  Serial.println("[POWER] Waiting for all buttons to be released before Deep Sleep...");
+
+  // Wait for all 4 buttons to be released (HIGH)
+  unsigned long waitStart = millis();
+  while ((digitalRead(BTN_MENU_PIN) == LOW || digitalRead(BTN_UP_PIN) == LOW || 
+          digitalRead(BTN_DOWN_PIN) == LOW || digitalRead(BTN_SELECT_PIN) == LOW) && (millis() - waitStart < 3000)) {
+    delay(20);
+  }
+  delay(150); // Additional debounce guard after button release
+
   Serial.println("[POWER] Entering Deep Sleep. RTC clock remains active. Wake via any button press...");
 
   if (oledAvailable) {
@@ -1382,7 +1392,7 @@ void renderTFTTime(const DateTime &now) {
     tftDisplay.setTextColor(ST7789_CYAN);
     tftDisplay.setTextSize(2);
     tftDisplay.setCursor(10, 10);
-    tftDisplay.print("RhythmSleep [1/5] TIME");
+    tftDisplay.print("RhythmSleep [1/6] TIME");
     tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
   }
 
@@ -1418,7 +1428,7 @@ void renderTFTEEG() {
     tftDisplay.setTextColor(ST7789_CYAN);
     tftDisplay.setTextSize(2);
     tftDisplay.setCursor(10, 10);
-    tftDisplay.print("RhythmSleep [2/5] EEG AI");
+    tftDisplay.print("RhythmSleep [2/6] EEG AI");
     tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
     lastTFTSec = 0;
   }
@@ -1466,7 +1476,7 @@ void renderTFTNNStats() {
     tftDisplay.setTextColor(ST7789_CYAN);
     tftDisplay.setTextSize(2);
     tftDisplay.setCursor(10, 10);
-    tftDisplay.print("RhythmSleep [3/5] AI STATS");
+    tftDisplay.print("RhythmSleep [3/6] AI STATS");
     tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
     lastTFTSec = 0;
   }
@@ -1509,7 +1519,7 @@ void renderTFTAlarm() {
     tftDisplay.setTextColor(ST7789_CYAN);
     tftDisplay.setTextSize(2);
     tftDisplay.setCursor(10, 10);
-    tftDisplay.print("RhythmSleep [4/5] ALARM");
+    tftDisplay.print("RhythmSleep [4/6] ALARM");
     tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
     lastTFTSec = 0;
   }
