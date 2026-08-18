@@ -1153,7 +1153,7 @@ void handlePairingAndTelemetry() {
 void renderMenuWiFiReset() {
   oledDisplay.setTextSize(1);
   oledDisplay.setCursor(0, 0);
-  oledDisplay.print("[5/5] WIFI & RESET");
+  oledDisplay.print("[5/6] WIFI & RESET");
   oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
 
   oledDisplay.setCursor(0, 16);
@@ -1181,6 +1181,47 @@ void renderMenuWiFiReset() {
   oledDisplay.print("> PRESS SEL: RESET");
 }
 
+void renderMenuDeepSleep() {
+  oledDisplay.setTextSize(1);
+  oledDisplay.setCursor(0, 0);
+  oledDisplay.print("[6/6] DEEP SLEEP");
+  oledDisplay.drawFastHLine(0, 11, 128, SSD1306_WHITE);
+
+  oledDisplay.setCursor(0, 18);
+  oledDisplay.print("RTC Keeps Time");
+
+  oledDisplay.setCursor(0, 30);
+  oledDisplay.print("Wake: Any Button");
+
+  oledDisplay.drawFastHLine(0, 43, 128, SSD1306_WHITE);
+  oledDisplay.setCursor(0, 50);
+  oledDisplay.print("> PRESS SEL: SLEEP");
+}
+
+void enterDeepSleep() {
+  Serial.println("[POWER] Entering Deep Sleep. RTC clock remains active. Wake via any button press...");
+
+  if (oledAvailable) {
+    oledDisplay.ssd1306_command(SSD1306_DISPLAYOFF);
+    oledDisplay.clearDisplay();
+    oledDisplay.display();
+  }
+  digitalWrite(TFT_BLK, LOW);
+
+  digitalWrite(PIN_VIBRATION, LOW);
+  playTone(0);
+  digitalWrite(SD_VCC_PIN, LOW);
+
+  WiFi.mode(WIFI_OFF);
+  btStop();
+
+  delay(100);
+
+  uint64_t mask = (1ULL << BTN_UP_PIN) | (1ULL << BTN_SELECT_PIN) | (1ULL << BTN_DOWN_PIN) | (1ULL << BTN_MENU_PIN);
+  esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
+  esp_deep_sleep_start();
+}
+
 void renderTFTWiFiReset() {
   digitalWrite(SD_CS_PIN, HIGH);
   digitalWrite(TFT_CS, LOW);
@@ -1189,7 +1230,7 @@ void renderTFTWiFiReset() {
     tftDisplay.setTextColor(ST7789_CYAN);
     tftDisplay.setTextSize(2);
     tftDisplay.setCursor(10, 10);
-    tftDisplay.print("RhythmSleep [5/5] WIFI");
+    tftDisplay.print("RhythmSleep [5/6] WIFI");
     tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
     lastTFTSec = 0;
   }
@@ -1227,6 +1268,38 @@ void renderTFTWiFiReset() {
   tftDisplay.setTextSize(2);
   tftDisplay.setCursor(20, 150);
   tftDisplay.print("PRESS OK -> FACTORY RESET");
+
+  digitalWrite(TFT_CS, HIGH);
+}
+
+void renderTFTDeepSleep() {
+  digitalWrite(SD_CS_PIN, HIGH);
+  digitalWrite(TFT_CS, LOW);
+
+  if (lastTFTSec == 255) {
+    tftDisplay.setTextColor(ST7789_CYAN);
+    tftDisplay.setTextSize(2);
+    tftDisplay.setCursor(10, 10);
+    tftDisplay.print("RhythmSleep [6/6] SLEEP");
+    tftDisplay.drawFastHLine(0, 35, 320, ST7789_DARKGRAY);
+    lastTFTSec = 0;
+  }
+
+  tftDisplay.setTextSize(2);
+  tftDisplay.setTextColor(ST7789_WHITE, ST7789_BLACK);
+  tftDisplay.setCursor(10, 50);
+  tftDisplay.print("Power Saver Mode         ");
+  tftDisplay.setCursor(10, 75);
+  tftDisplay.print("RTC Clock Keeps Time     ");
+  tftDisplay.setCursor(10, 100);
+  tftDisplay.print("Wakeup: Press Any Button ");
+
+  tftDisplay.fillRect(10, 135, 300, 38, ST7789_BLUE);
+  tftDisplay.drawRect(10, 135, 300, 38, ST7789_WHITE);
+  tftDisplay.setTextColor(ST7789_WHITE);
+  tftDisplay.setTextSize(2);
+  tftDisplay.setCursor(25, 145);
+  tftDisplay.print("PRESS OK -> ENTER SLEEP");
 
   digitalWrite(TFT_CS, HIGH);
 }
@@ -1754,7 +1827,7 @@ void handleButtonActions() {
 
   if (btn1) {
     alarmEditField = 0;
-    currentMenu = (currentMenu + 1) % 5; // 0: Time, 1: EEG AI, 2: AI Stats, 3: Smart Alarm, 4: WiFi & Reset
+    currentMenu = (currentMenu + 1) % 6; // 0: Time, 1: EEG AI, 2: AI Stats, 3: Smart Alarm, 4: WiFi & Reset, 5: Deep Sleep
     lastTFTMenu = 255;
   }
 
@@ -1817,6 +1890,12 @@ void handleButtonActions() {
       performFactoryReset();
     }
   }
+
+  if (currentMenu == 5) { // Menu 5: Deep Sleep / Power Down
+    if (btn4) {
+      enterDeepSleep();
+    }
+  }
 }
 
 // ===================================================================
@@ -1872,21 +1951,17 @@ void computeFFT(double *vR, double *vI, uint16_t samples) {
 }
 
 double findDominantFrequency(double *vR, double *vI, uint16_t samples, double samplingFreq, double minF, double maxF) {
-  double binWidth = samplingFreq / (double)samples;
-  
+  double maxMag = 0.0;
+  uint16_t peakBin = 0;
+  double binWidth = samplingFreq / samples;
+
   uint16_t minBin = (uint16_t)ceil(minF / binWidth);
   uint16_t maxBin = (uint16_t)floor(maxF / binWidth);
 
-  if (minBin < 1) minBin = 1;
-  if (maxBin >= samples / 2) maxBin = (samples / 2) - 1;
-
-  double maxMagnitude = 0.0;
-  uint16_t peakBin = minBin;
-
   for (uint16_t i = minBin; i <= maxBin; i++) {
-    double magnitude = sqrt(vR[i] * vR[i] + vI[i] * vI[i]);
-    if (magnitude > maxMagnitude) {
-      maxMagnitude = magnitude;
+    double mag = sqrt(vR[i] * vR[i] + vI[i] * vI[i]);
+    if (mag > maxMag) {
+      maxMag = mag;
       peakBin = i;
     }
   }
@@ -2096,6 +2171,7 @@ void loop() {
       else if (currentMenu == 2) renderTFTNNStats();
       else if (currentMenu == 3) renderTFTAlarm();
       else if (currentMenu == 4) renderTFTWiFiReset();
+      else if (currentMenu == 5) renderTFTDeepSleep();
     }
   }
 
@@ -2111,6 +2187,7 @@ void loop() {
       else if (currentMenu == 2) renderMenuNNStats();
       else if (currentMenu == 3) renderMenuAlarm();
       else if (currentMenu == 4) renderMenuWiFiReset();
+      else if (currentMenu == 5) renderMenuDeepSleep();
     }
     oledDisplay.display();
   }
