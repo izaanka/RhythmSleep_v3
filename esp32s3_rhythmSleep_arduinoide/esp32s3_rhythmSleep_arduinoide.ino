@@ -870,12 +870,12 @@ void performFactoryReset() {
 
 void setupWebServerRoutes() {
   auto serveRootHTML = []() {
-    String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>";
-    html += "<title>RhythmSleep WiFi Setup</title>";
+    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
+    html += "<title>RhythmSleep Wi-Fi Setup</title>";
     html += "<style>body{font-family:sans-serif;background:#0f172a;color:#fff;padding:20px;text-align:center}";
     html += "input,select{width:100%;padding:12px;margin:8px 0;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#fff;box-sizing:border-box}";
     html += "input[type=submit]{background:#00f2fe;color:#000;font-weight:bold;cursor:pointer}</style></head><body>";
-    html += "<h2>🧠 RhythmSleep WiFi Setup</h2>";
+    html += "<h2>RhythmSleep Wi-Fi Setup</h2>";
     html += "<p>Configure ESP32 Wi-Fi Connection</p>";
     html += "<form action='/save' method='POST'>";
     
@@ -926,7 +926,7 @@ void setupWebServerRoutes() {
       preferences.end();
 
       String res = "<!DOCTYPE html><html><body style='background:#0f172a;color:#00f2fe;font-family:sans-serif;text-align:center;padding:50px'>";
-      res += "<h2>✅ WiFi Saved!</h2><p>RhythmSleep ESP32 is restarting and connecting to " + newSSID + "...</p></body></html>";
+      res += "<h2>WiFi Saved!</h2><p>RhythmSleep ESP32 is restarting and connecting to " + newSSID + "...</p></body></html>";
       webServer.send(200, "text/html", res);
 
       delay(1500);
@@ -941,6 +941,38 @@ void setupWebServerRoutes() {
   });
 }
 
+void startSoftAP() {
+  isAPMode = true;
+  WiFi.mode(WIFI_AP_STA);
+  IPAddress apIP(192, 168, 4, 1);
+  IPAddress netMask(255, 255, 255, 0);
+  WiFi.softAPConfig(apIP, apIP, netMask);
+
+  if (wifiSSID.length() > 0 && wifiPass.length() > 0) {
+    WiFi.softAP("RhythmSleep-Setup", wifiPass.c_str());
+    Serial.printf("[WIFI AP ACTIVE] SoftAP active as 'RhythmSleep-Setup' (Password Protected) at 192.168.4.1\n");
+  } else {
+    WiFi.softAP("RhythmSleep-Setup");
+    Serial.printf("[WIFI AP ACTIVE] SoftAP active as 'RhythmSleep-Setup' (Open) at 192.168.4.1\n");
+  }
+  delay(100);
+
+  dnsServer.start(53, "*", apIP);
+  setupWebServerRoutes();
+  webServer.begin();
+  WiFi.scanNetworks(true);
+}
+
+void stopSoftAP() {
+  if (isAPMode) {
+    dnsServer.stop();
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_STA);
+    isAPMode = false;
+    Serial.println("[WIFI AP CLOSED] Connected to Wi-Fi! SoftAP turned OFF.");
+  }
+}
+
 void initWiFiProvisioning() {
   preferences.begin("rhythm_cfg", false);
   wifiSSID  = preferences.getString("ssid", "");
@@ -950,30 +982,47 @@ void initWiFiProvisioning() {
   isPaired  = preferences.getBool("is_paired", false);
   preferences.end();
 
-  WiFi.mode(WIFI_AP_STA);
-  IPAddress apIP(192, 168, 4, 1);
-  IPAddress netMask(255, 255, 255, 0);
-  WiFi.softAPConfig(apIP, apIP, netMask);
-  WiFi.softAP("RhythmSleep-Setup");
-  delay(100);
-
-  dnsServer.start(53, "*", apIP);
-  setupWebServerRoutes();
-  webServer.begin();
-  WiFi.scanNetworks(true);
-  Serial.println("[WIFI AP ACTIVE] SoftAP active as 'RhythmSleep-Setup' at 192.168.4.1");
-
   if (wifiSSID.length() > 0) {
-    Serial.printf("[WIFI STA] Attempting background connection to SSID: %s...\n", wifiSSID.c_str());
+    Serial.printf("[WIFI STA] Connecting to saved SSID: %s...\n", wifiSSID.c_str());
+    WiFi.mode(WIFI_STA);
     WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
+
+    unsigned long startMs = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - startMs < 8000)) {
+      delay(250);
+      Serial.print(".");
+    }
+    Serial.println();
+
+    if (WiFi.status() == WL_CONNECTED) {
+      isAPMode = false;
+      Serial.printf("[WIFI SUCCESS] Connected! IP: %s (SoftAP Disabled)\n", WiFi.localIP().toString().c_str());
+      udpSocket.begin(8888);
+      return;
+    } else {
+      Serial.println("[WIFI NOTICE] Connection failed/timed out. Enabling password-protected SoftAP.");
+    }
   }
+
+  startSoftAP();
 }
 
 void handlePairingAndTelemetry() {
-  dnsServer.processNextRequest();
-  webServer.handleClient();
+  if (isAPMode) {
+    dnsServer.processNextRequest();
+    webServer.handleClient();
 
-  if (WiFi.status() != WL_CONNECTED) return;
+    if (WiFi.status() == WL_CONNECTED) {
+      stopSoftAP();
+      udpSocket.begin(8888);
+    }
+    return;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    startSoftAP();
+    return;
+  }
 
   // Unpaired State: Broadcast DISCOVER via UDP to Port 8888
   if (!isPaired) {
