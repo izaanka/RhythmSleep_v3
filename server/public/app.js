@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
     metricDuration.textContent = h > 0 ? `${h}h ${m}m` : `${m}m`;
 
     metricDeep.textContent = `${stats.deepPct || 0}%`;
-    metricRem.textContent = `${(stats.remPct || 0) + (stats.lightPct || 0)}%`;
+    metricRem.textContent = `${stats.remPct || 0}%`;
 
     // Render Full Hypnogram Chart
     if (hypnogramChart) {
@@ -111,7 +111,17 @@ document.addEventListener('DOMContentLoaded', () => {
       session.logs.forEach(log => {
         const timeStr = new Date(log.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         labels.push(timeStr);
-        stageCodes.push(log.stage_code);
+        let code = log.stage_code;
+        if (log.stage === 'REM Sleep' || log.stage === 'REM' || code === 3) {
+          code = 3;
+        } else if (log.stage === 'Deep Sleep' || code === 2) {
+          code = 2;
+        } else if (log.stage === 'Light Sleep' || code === 1) {
+          code = 1;
+        } else {
+          code = 0;
+        }
+        stageCodes.push(code);
       });
 
       hypnogramChart.data.labels = labels;

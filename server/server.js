@@ -72,9 +72,9 @@ function calculateSessionStats(session) {
   let countDeep = 0, countLight = 0, countRem = 0, countAwake = 0;
 
   logs.forEach(log => {
-    if (log.stage_code === 2) countDeep++;
-    else if (log.stage_code === 1) countLight++;
-    else if (log.stage_code === 2 || log.stage === 'REM Sleep') countRem++;
+    if (log.stage === 'REM Sleep' || log.stage === 'REM' || log.stage_code === 3) countRem++;
+    else if (log.stage === 'Deep Sleep' || log.stage_code === 2) countDeep++;
+    else if (log.stage === 'Light Sleep' || log.stage_code === 1) countLight++;
     else countAwake++;
   });
 
