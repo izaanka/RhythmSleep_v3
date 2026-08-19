@@ -28,6 +28,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const deviceTokenEl = document.getElementById('device-token');
   const deviceLastSeenEl = document.getElementById('device-last-seen');
 
+  const manualEspIp = document.getElementById('manual-esp-ip');
+  const btnManualPair = document.getElementById('btn-manual-pair');
   const btnPair = document.getElementById('btn-pair');
   const btnUnpair = document.getElementById('btn-unpair');
   const btnFactoryReset = document.getElementById('btn-factory-reset');
@@ -469,6 +471,43 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
       } catch (err) { showMessage('Network error.', true); }
+    });
+  }
+
+  if (btnManualPair) {
+    btnManualPair.addEventListener('click', async () => {
+      const ip = manualEspIp ? manualEspIp.value.trim() : '';
+      if (!ip) {
+        showMessage('Please enter ESP32 IP address.', true);
+        return;
+      }
+      try {
+        showMessage(`Connecting to ESP32 @ ${ip}...`);
+        const res = await fetch('/api/manual-pair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ip })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          if (data.pairedDevice) {
+            updatePairingUI(data.pairedDevice);
+            showMessage(`Connected & Paired with ESP32 @ ${ip}!`);
+          }
+        } else {
+          showMessage(data.error || 'Failed to connect.', true);
+        }
+      } catch (err) {
+        showMessage('Network error during manual pairing.', true);
+      }
+    });
+  }
+
+  if (manualEspIp) {
+    manualEspIp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        if (btnManualPair) btnManualPair.click();
+      }
     });
   }
 

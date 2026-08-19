@@ -342,6 +342,70 @@ app.post('/api/pair', (req, res) => {
   });
 });
 
+// REST API: Manual IP Pairing Endpoint
+app.post('/api/manual-pair', async (req, res) => {
+  const { ip } = req.body;
+  if (!ip) return res.status(400).json({ error: 'IP address required' });
+
+  const targetIp = cleanIpAddress(ip.trim());
+  store.unpairedByRequest = false;
+
+  const token = store.pairedDevice ? store.pairedDevice.token : `RS-PAIR-${Math.floor(100000 + Math.random() * 900000)}`;
+
+  let espMac = store.pairedDevice ? store.pairedDevice.mac : '3C:0F:02:E4:72:E0';
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const espRes = await fetch(`http://${targetIp}/api/pair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server_ip: getLocalIpAddress(), token: token }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    if (espRes.ok) {
+      const espData = await espRes.json();
+      if (espData.mac) espMac = espData.mac;
+      console.log(`[HTTP MANUAL PAIR] ESP32 confirmed pairing at ${targetIp} (MAC: ${espMac})`);
+    }
+  } catch (err) {
+    console.log(`[HTTP MANUAL PAIR NOTICE] Could not reach http://${targetIp}/api/pair directly (${err.message}). Using fallback handshake.`);
+  }
+
+  // Send UDP ACK directly to target IP
+  const ackPayload = JSON.stringify({
+    type: 'PAIR_ACK',
+    server_ip: getLocalIpAddress(),
+    server_port: HTTP_PORT,
+    token: token
+  });
+  udpSocket.send(ackPayload, 8888, targetIp, () => {});
+  udpSocket.send(ackPayload, 8888, '255.255.255.255', () => {});
+  udpSocket.send(ackPayload, 8888, '192.168.1.255', () => {});
+
+  // Send Serial PAIR command if USB serial connected
+  if (serialConnected && serialPortInstance) {
+    serialPortInstance.write(`PAIR:${getLocalIpAddress()}:${token}\n`);
+    console.log(`[SERIAL PAIR SENT] PAIR:${getLocalIpAddress()}:${token}`);
+  }
+
+  store.pairedDevice = {
+    mac: espMac,
+    ip: targetIp,
+    token: token,
+    pairedAt: Date.now(),
+    lastSeen: Date.now()
+  };
+  saveStore();
+  broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
+
+  res.json({
+    status: 'ok',
+    message: `Connected to ESP32 @ ${targetIp}`,
+    pairedDevice: store.pairedDevice
+  });
+});
+
 // REST API: ESP32 Sleep Telemetry & Session Completion Endpoint
 app.post('/api/sleep-data', (req, res) => {
   const telemetry = req.body;

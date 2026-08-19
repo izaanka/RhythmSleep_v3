@@ -201,6 +201,13 @@
               Factory Reset
             </button>
           </div>
+          <div class="manual-pair-box mt-3" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px;">
+            <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 6px;">Manual IP Pairing (Enter ESP32 IP):</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="manual-esp-ip" placeholder="e.g. 192.168.1.8" style="flex: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; font-family: monospace; font-size: 0.85rem;">
+              <button id="btn-manual-pair" class="btn btn-primary" style="padding: 8px 16px; font-size: 0.85rem; white-space: nowrap;">Connect IP</button>
+            </div>
+          </div>
           <div id="action-message" class="action-message hidden"></div>
         </div>
       </div>

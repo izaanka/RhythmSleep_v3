@@ -946,6 +946,50 @@ void setupWebServerRoutes() {
     }
   });
 
+  webServer.on("/api/pair", HTTP_POST, []() {
+    String postBody = webServer.arg("plain");
+    String newServerIP = webServer.arg("server_ip");
+    String newToken = webServer.arg("token");
+    
+    if (newServerIP.length() == 0 && postBody.length() > 0) {
+      int ipIdx = postBody.indexOf("\"server_ip\":\"");
+      if (ipIdx != -1) {
+        int ipEnd = postBody.indexOf("\"", ipIdx + 13);
+        if (ipEnd != -1) newServerIP = postBody.substring(ipIdx + 13, ipEnd);
+      }
+      int tokIdx = postBody.indexOf("\"token\":\"");
+      if (tokIdx != -1) {
+        int tokEnd = postBody.indexOf("\"", tokIdx + 9);
+        if (tokEnd != -1) newToken = postBody.substring(tokIdx + 9, tokEnd);
+      }
+    }
+
+    if (newServerIP.length() > 0) {
+      serverIP = newServerIP;
+      pairToken = (newToken.length() > 0) ? newToken : "RS-PAIR-MANUAL";
+      isPaired = true;
+
+      preferences.begin("rhythm_cfg", false);
+      preferences.putString("server_ip", serverIP);
+      preferences.putString("token", pairToken);
+      preferences.putBool("is_paired", true);
+      preferences.end();
+
+      Serial.printf("[MANUAL PAIR HTTP] Paired with Server: %s | Token: %s\n", serverIP.c_str(), pairToken.c_str());
+      fetchServerTime();
+
+      String res = "{\"status\":\"ok\",\"mac\":\"" + WiFi.macAddress() + "\",\"ip\":\"" + WiFi.localIP().toString() + "\",\"paired\":true}";
+      webServer.send(200, "application/json", res);
+    } else {
+      webServer.send(400, "application/json", "{\"error\":\"Missing server_ip\"}");
+    }
+  });
+
+  webServer.on("/api/status", HTTP_GET, []() {
+    String res = "{\"status\":\"ok\",\"mac\":\"" + WiFi.macAddress() + "\",\"ip\":\"" + WiFi.localIP().toString() + "\",\"is_paired\":" + String(isPaired ? "true" : "false") + ",\"server_ip\":\"" + serverIP + "\"}";
+    webServer.send(200, "application/json", res);
+  });
+
   webServer.onNotFound([serveRootHTML]() {
     if (!isAPMode && isPaired && serverIP.length() > 0) {
       String target = "http://" + serverIP + ":3000/";
