@@ -958,6 +958,7 @@ void setupWebServerRoutes() {
 }
 
 void startSoftAP() {
+  if (isAPMode) return;
   isAPMode = true;
   WiFi.mode(WIFI_AP_STA);
   IPAddress apIP(192, 168, 4, 1);
@@ -971,12 +972,11 @@ void startSoftAP() {
     WiFi.softAP("RhythmSleep-Setup");
     Serial.printf("[WIFI AP ACTIVE] SoftAP active as 'RhythmSleep-Setup' (Open) at 192.168.4.1\n");
   }
-  delay(100);
+  delay(50);
 
   dnsServer.start(53, "*", apIP);
   setupWebServerRoutes();
   webServer.begin();
-  WiFi.scanNetworks(true);
 }
 
 void stopSoftAP() {
@@ -1004,8 +1004,8 @@ void initWiFiProvisioning() {
     WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
 
     unsigned long startMs = millis();
-    while (WiFi.status() != WL_CONNECTED && (millis() - startMs < 8000)) {
-      delay(250);
+    while (WiFi.status() != WL_CONNECTED && (millis() - startMs < 2000)) {
+      delay(100);
       Serial.print(".");
     }
     Serial.println();
@@ -1019,7 +1019,7 @@ void initWiFiProvisioning() {
       fetchServerTime();
       return;
     } else {
-      Serial.println("[WIFI NOTICE] Connection failed/timed out. Enabling password-protected SoftAP.");
+      Serial.println("[WIFI NOTICE] Connecting in background...");
     }
   }
 
@@ -1049,15 +1049,20 @@ DateTime getCurrentTime() {
   return DateTime(2026, 8, 18, (millis()/3600000)%24, (millis()/60000)%60, (millis()/1000)%60);
 }
 
+static unsigned long lastTimeFetchMs = 0;
+
 void fetchServerTime() {
   if (WiFi.status() == WL_CONNECTED) {
+    if (unixTimeOffset > 0 && (millis() - lastTimeFetchMs < 60000)) return;
+    lastTimeFetchMs = millis();
+
     String host = (serverIP.length() > 0) ? serverIP : WiFi.gatewayIP().toString();
     if (host.length() == 0 || host == "0.0.0.0") return;
 
     HTTPClient http;
     String url = "http://" + host + ":3000/api/time";
     http.begin(url);
-    http.setTimeout(3000);
+    http.setTimeout(800);
     int httpCode = http.GET();
     if (httpCode == 200) {
       String resp = http.getString();
@@ -1072,6 +1077,8 @@ void fetchServerTime() {
   }
 }
 
+static unsigned long lastAPCheckMs = 0;
+
 void handlePairingAndTelemetry() {
   if (isAPMode) {
     dnsServer.processNextRequest();
@@ -1082,6 +1089,7 @@ void handlePairingAndTelemetry() {
       udpSocket.begin(8888);
       setupWebServerRoutes();
       webServer.begin();
+      fetchServerTime();
     }
     return;
   }
@@ -1089,7 +1097,10 @@ void handlePairingAndTelemetry() {
   webServer.handleClient();
 
   if (WiFi.status() != WL_CONNECTED) {
-    startSoftAP();
+    if (wifiSSID.length() == 0 || (millis() - lastAPCheckMs > 12000)) {
+      lastAPCheckMs = millis();
+      startSoftAP();
+    }
     return;
   }
 
@@ -2106,7 +2117,7 @@ void updateFFT() {
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial && millis() < 3000);
+  while (!Serial && millis() < 300);
 
   Serial.println("\n--- ESP32-S3 System (ST7789 TFT + BLE Audio + SD Music + PCF8563) ---");
 
@@ -2131,6 +2142,7 @@ void setup() {
 
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(400000);
+  Wire.setTimeOut(200);
 
   checkSDCardDetection();
 
@@ -2172,7 +2184,7 @@ void setup() {
     oledDisplay.display();
   }
 
-  delay(1500);
+  delay(100);
 
   if (rtc.begin()) {
     rtcAvailable = true;
