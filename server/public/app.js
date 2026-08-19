@@ -450,17 +450,18 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Unpair & Factory Reset Buttons
-  btnUnpair.addEventListener('click', async () => {
-    if (!confirm('Unpair ESP32 device?')) return;
-    try {
-      const res = await fetch('/api/unpair', { method: 'POST' });
-      const data = await res.json();
-      if (data.status === 'ok') {
-        updatePairingUI(null);
-        showMessage('Device unpaired.');
-      }
-    } catch (err) { showMessage('Network error.', true); }
-  });
+  if (btnUnpair) {
+    btnUnpair.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/unpair', { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          updatePairingUI(null);
+          showMessage('Device unpaired.');
+        }
+      } catch (err) { showMessage('Network error.', true); }
+    });
+  }
 
   // Terminal Event Listeners
   if (btnClearTerminal) {
@@ -518,17 +519,19 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  btnFactoryReset.addEventListener('click', async () => {
-    if (!confirm('Wipe all server memory and sleep sessions?')) return;
-    try {
-      const res = await fetch('/api/factory-reset', { method: 'POST' });
-      const data = await res.json();
-      if (data.status === 'ok') {
-        showMessage('Factory reset executed.');
-        fetchSessions();
-      }
-    } catch (err) { showMessage('Network error.', true); }
-  });
+  if (btnFactoryReset) {
+    btnFactoryReset.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/factory-reset', { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          updatePairingUI(null);
+          showMessage('Factory reset executed.');
+          fetchSessions();
+        }
+      } catch (err) { showMessage('Network error.', true); }
+    });
+  }
 
   initChart();
   connectWebSocket();
