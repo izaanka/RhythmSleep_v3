@@ -210,7 +210,8 @@ document.addEventListener('DOMContentLoaded', () => {
       pairingStatusBadge.className = 'badge badge-connected';
       actualMac = pairedDevice.mac;
       updateMacDisplay();
-      deviceIpEl.textContent = pairedDevice.ip || '---';
+      const rawIp = pairedDevice.ip || '---';
+      deviceIpEl.textContent = rawIp.replace(/^::ffff:/, '');
       deviceTokenEl.textContent = pairedDevice.token || '---';
       
       if (pairedDevice.lastSeen) {

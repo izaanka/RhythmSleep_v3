@@ -43,12 +43,22 @@ function saveStore() {
   }
 }
 
+function cleanIpAddress(ip) {
+  if (!ip) return '---';
+  let clean = String(ip);
+  if (clean.startsWith('::ffff:')) {
+    clean = clean.replace('::ffff:', '');
+  }
+  if (clean === '::1') clean = '127.0.0.1';
+  return clean;
+}
+
 function getLocalIpAddress() {
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name]) {
       if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address;
+        return cleanIpAddress(iface.address);
       }
     }
   }
@@ -277,7 +287,8 @@ app.post('/api/sleep-data', (req, res) => {
     return res.status(401).json({ status: 'unpaired', error: 'Device not paired' });
   }
 
-  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const clientIp = cleanIpAddress(rawIp);
   store.pairedDevice.lastSeen = Date.now();
   store.pairedDevice.ip = clientIp;
 
@@ -472,7 +483,7 @@ udpSocket.on('message', (msg, rinfo) => {
 
       store.pairedDevice = {
         mac: deviceMac,
-        ip: rinfo.address,
+        ip: cleanIpAddress(rinfo.address),
         token: token,
         pairedAt: store.pairedDevice ? store.pairedDevice.pairedAt : Date.now(),
         lastSeen: Date.now()
