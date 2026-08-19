@@ -171,6 +171,27 @@ function initSerialPort() {
             serialLogs.push(logEntry);
             if (serialLogs.length > 200) serialLogs.shift();
             broadcastWs('SERIAL_LOG', { log: logEntry });
+
+            // Auto-detect IP from ESP32 boot/WiFi logs if pairing mode is active
+            if (cleanLine.includes('[WIFI SUCCESS] Connected! IP:')) {
+              const ipMatch = cleanLine.match(/IP:\s*([0-9\.]+)/);
+              if (ipMatch && !store.unpairedByRequest) {
+                const detectedIp = ipMatch[1];
+                const token = store.pairedDevice ? store.pairedDevice.token : `RS-PAIR-${Math.floor(100000 + Math.random() * 900000)}`;
+                store.pairedDevice = {
+                  mac: store.pairedDevice ? store.pairedDevice.mac : '3C:0F:02:E4:72:E0',
+                  ip: detectedIp,
+                  token: token,
+                  pairedAt: store.pairedDevice ? store.pairedDevice.pairedAt : Date.now(),
+                  lastSeen: Date.now()
+                };
+                saveStore();
+                broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
+                if (serialPortInstance && serialConnected) {
+                  serialPortInstance.write(`PAIR:${getLocalIpAddress()}:${token}\n`);
+                }
+              }
+            }
           }
         });
       });
@@ -281,13 +302,13 @@ app.post('/api/pair', (req, res) => {
   const { mac } = req.body || {};
   const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   const clientIp = cleanIpAddress(rawIp);
-  const deviceMac = mac || '3C:0F:02:E4:72:E0';
+  const deviceMac = mac || (store.pairedDevice ? store.pairedDevice.mac : '3C:0F:02:E4:72:E0');
 
   let token = store.pairedDevice ? store.pairedDevice.token : `RS-PAIR-${Math.floor(100000 + Math.random() * 900000)}`;
 
   store.pairedDevice = {
     mac: deviceMac,
-    ip: '192.168.1.8',
+    ip: (clientIp !== '127.0.0.1' && clientIp !== '---') ? clientIp : '192.168.1.8',
     token: token,
     pairedAt: Date.now(),
     lastSeen: Date.now()
@@ -295,6 +316,22 @@ app.post('/api/pair', (req, res) => {
   saveStore();
   broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
   console.log(`[HTTP PAIR SUCCESS] Device ${deviceMac} paired with token ${token}`);
+
+  // Send PAIR command over USB Serial directly to ESP32
+  if (serialConnected && serialPortInstance) {
+    serialPortInstance.write(`PAIR:${getLocalIpAddress()}:${token}\n`);
+    console.log(`[SERIAL PAIR SENT] PAIR:${getLocalIpAddress()}:${token}`);
+  }
+
+  // Send UDP ACK Broadcasts
+  const ackPayload = JSON.stringify({
+    type: 'PAIR_ACK',
+    server_ip: getLocalIpAddress(),
+    server_port: HTTP_PORT,
+    token: token
+  });
+  udpSocket.send(ackPayload, 8888, '255.255.255.255', () => {});
+  udpSocket.send(ackPayload, 8888, '192.168.1.255', () => {});
 
   res.json({
     status: 'ok',
@@ -490,6 +527,12 @@ app.post('/api/unpair', (req, res) => {
   store.unpairedByRequest = true;
   saveStore();
   broadcastWs('PAIRING_UPDATE', { pairedDevice: null });
+
+  if (serialConnected && serialPortInstance) {
+    serialPortInstance.write('UNPAIR\n');
+    console.log('[SERIAL UNPAIR SENT]');
+  }
+
   res.json({ status: 'ok', message: 'Device unpaired.' });
 });
 

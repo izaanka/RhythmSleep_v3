@@ -958,6 +958,7 @@ void setupWebServerRoutes() {
 }
 
 void startSoftAP() {
+  if (isAPMode) return;
   isAPMode = true;
   WiFi.mode(WIFI_AP_STA);
   IPAddress apIP(192, 168, 4, 1);
@@ -1211,7 +1212,7 @@ void handlePairingAndTelemetry() {
       http.begin(url);
       http.addHeader("Content-Type", "application/json");
 
-      DateTime now = rtcAvailable ? rtc.now() : DateTime(2026, 8, 6, 12, 0, 0);
+      DateTime now = getCurrentTime();
 
       String body = "{";
       body += "\"token\":\"" + pairToken + "\",";
@@ -1254,6 +1255,64 @@ void handlePairingAndTelemetry() {
         Serial.printf("[TELEMETRY FAIL] HTTP POST error: %s\n", http.errorToString(httpCode).c_str());
       }
       http.end();
+    }
+  }
+}
+
+void handleSerialCommands() {
+  if (Serial.available() > 0) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    if (cmd.length() == 0) return;
+
+    Serial.printf("[SERIAL CMD] %s\n", cmd.c_str());
+
+    if (cmd.startsWith("WIFI:")) {
+      int firstColon = cmd.indexOf(':');
+      int secondColon = cmd.indexOf(':', firstColon + 1);
+      if (firstColon != -1) {
+        String newSsid = (secondColon != -1) ? cmd.substring(firstColon + 1, secondColon) : cmd.substring(firstColon + 1);
+        String newPass = (secondColon != -1) ? cmd.substring(secondColon + 1) : "";
+        
+        preferences.begin("rhythm_cfg", false);
+        preferences.putString("ssid", newSsid);
+        preferences.putString("pass", newPass);
+        preferences.end();
+        Serial.printf("[SERIAL WIFI] Saved SSID: %s. Connecting...\n", newSsid.c_str());
+        initWiFiProvisioning();
+      }
+    } else if (cmd.startsWith("PAIR:")) {
+      int firstColon = cmd.indexOf(':');
+      int secondColon = cmd.indexOf(':', firstColon + 1);
+      if (firstColon != -1) {
+        serverIP = (secondColon != -1) ? cmd.substring(firstColon + 1, secondColon) : cmd.substring(firstColon + 1);
+        pairToken = (secondColon != -1) ? cmd.substring(secondColon + 1) : "RS-PAIR-DIRECT";
+        isPaired = true;
+        preferences.begin("rhythm_cfg", false);
+        preferences.putString("server_ip", serverIP);
+        preferences.putString("token", pairToken);
+        preferences.putBool("is_paired", true);
+        preferences.end();
+        Serial.printf("[SERIAL PAIR SUCCESS] Server: %s | Token: %s\n", serverIP.c_str(), pairToken.c_str());
+        fetchServerTime();
+      }
+    } else if (cmd == "UNPAIR") {
+      isPaired = false;
+      preferences.begin("rhythm_cfg", false);
+      preferences.putBool("is_paired", false);
+      preferences.end();
+      Serial.println("[SERIAL UNPAIR] Pairing cleared on ESP32.");
+    } else if (cmd == "STATUS") {
+      Serial.printf("[STATUS] WiFi: %s | IP: %s | MAC: %s | Paired: %s | Server: %s | AP: %s\n",
+        (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : "DISCONNECTED",
+        WiFi.localIP().toString().c_str(),
+        WiFi.macAddress().c_str(),
+        isPaired ? "YES" : "NO",
+        serverIP.c_str(),
+        isAPMode ? "ACTIVE" : "OFF"
+      );
+    } else if (cmd == "RESET_WIFI" || cmd == "RESET") {
+      performFactoryReset();
     }
   }
 }
@@ -2249,6 +2308,7 @@ void setup() {
 }
 
 void loop() {
+  handleSerialCommands();
   handleButtonActions();
 
   // Run WiFi captive portal web server (AP mode) or UDP pairing & HTTP telemetry (STA mode)
