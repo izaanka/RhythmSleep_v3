@@ -48,7 +48,7 @@
           </div>
           <div class="session-timer-badge">
             <span class="label">Qualification Filter</span>
-            <span class="value" id="live-session-timer">Sleep Ratio: 0% (Min 90%) | Actual Sleep: 0m (Min 60m)</span>
+            <span class="value" id="live-session-timer">0m logged / 60m min threshold</span>
           </div>
         </div>
 
@@ -143,6 +143,34 @@
         <div class="card-body chart-container">
           <canvas id="hypnogramChart"></canvas>
         </div>
+      </div>
+
+      <!-- Live ESP32 Serial Monitor & Terminal Console -->
+      <div class="solid-card mt-4 col-span-2 card-serial-terminal">
+        <div class="card-header">
+          <div class="terminal-title-group">
+            <h3>Live Serial Console</h3>
+            <span id="serial-status-badge" class="badge badge-disconnected">Connecting...</span>
+          </div>
+          <div class="terminal-actions">
+            <input type="text" id="serial-filter-input" placeholder="Filter logs..." class="custom-input-sm">
+            <label class="checkbox-label">
+              <input type="checkbox" id="serial-autoscroll" checked> Auto-Scroll
+            </label>
+            <button id="btn-clear-terminal" class="btn btn-sm btn-secondary">Clear</button>
+            <button id="btn-copy-terminal" class="btn btn-sm btn-secondary">Copy</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="serial-terminal-window" class="terminal-window">
+            <div class="terminal-line system-line">[SYSTEM] Terminal initialized. Streaming logs...</div>
+          </div>
+          <div class="terminal-input-bar mt-2">
+            <input type="text" id="serial-cmd-input" placeholder="Type command..." class="custom-input">
+            <button id="btn-send-serial-cmd" class="btn btn-primary">Send</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Secondary Grid: Device Info & EEG Spectral Power -->

@@ -206,6 +206,54 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 4000);
   }
 
+  // Terminal DOM Elements
+  const serialStatusBadge = document.getElementById('serial-status-badge');
+  const serialFilterInput = document.getElementById('serial-filter-input');
+  const serialAutoscroll = document.getElementById('serial-autoscroll');
+  const btnClearTerminal = document.getElementById('btn-clear-terminal');
+  const btnCopyTerminal = document.getElementById('btn-copy-terminal');
+  const serialTerminalWindow = document.getElementById('serial-terminal-window');
+  const serialCmdInput = document.getElementById('serial-cmd-input');
+  const btnSendSerialCmd = document.getElementById('btn-send-serial-cmd');
+
+  function updateSerialStatusUI(status) {
+    if (status && status.connected) {
+      serialStatusBadge.textContent = `CONNECTED (${status.port || '/dev/ttyACM0'})`;
+      serialStatusBadge.className = 'badge badge-connected';
+    } else {
+      serialStatusBadge.textContent = `RECONNECTING (${status ? status.port : '/dev/ttyACM0'})...`;
+      serialStatusBadge.className = 'badge badge-disconnected';
+    }
+  }
+
+  function appendSerialLog(logStr) {
+    if (!serialTerminalWindow) return;
+    const filterText = serialFilterInput ? serialFilterInput.value.toLowerCase().trim() : '';
+
+    if (filterText && !logStr.toLowerCase().includes(filterText)) {
+      return;
+    }
+
+    const lineDiv = document.createElement('div');
+    lineDiv.className = 'terminal-line';
+    if (logStr.includes('[ALARM]') || logStr.includes('RINGING')) {
+      lineDiv.classList.add('error-line');
+    } else if (logStr.includes('[NN') || logStr.includes('[SIGNAL')) {
+      lineDiv.classList.add('system-line');
+    }
+    lineDiv.textContent = logStr;
+
+    serialTerminalWindow.appendChild(lineDiv);
+
+    while (serialTerminalWindow.children.length > 300) {
+      serialTerminalWindow.removeChild(serialTerminalWindow.firstChild);
+    }
+
+    if (serialAutoscroll && serialAutoscroll.checked) {
+      serialTerminalWindow.scrollTop = serialTerminalWindow.scrollHeight;
+    }
+  }
+
   function updateNeuralStateUI(neuralState, activeSession, qualification) {
     if (!neuralState) return;
 
@@ -239,18 +287,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (liveSessionTimer) {
         if (isQualified) {
-          liveSessionTimer.textContent = `Sleep Ratio: ${ratio}% (Passed) | Actual Sleep: ${actualMin}m (Passed)`;
+          liveSessionTimer.textContent = `Sleep Ratio: ${ratio}% ✅ | Actual Sleep: ${actualMin}m ✅ (Log Qualified!)`;
           liveSessionTimer.style.color = 'var(--accent-green)';
         } else {
-          const ratioStatus = ratio >= 90 ? '(Passed)' : '(Min 90%)';
-          const durStatus = actualMin >= 60 ? '(Passed)' : '(Min 60m)';
+          const ratioStatus = ratio >= 90 ? '✅' : '(Need ≥90%)';
+          const durStatus = actualMin >= 60 ? '✅' : '(Need ≥60m)';
           liveSessionTimer.textContent = `Sleep Ratio: ${ratio}% ${ratioStatus} | Actual Sleep: ${actualMin}m ${durStatus}`;
           liveSessionTimer.style.color = 'var(--accent-warning)';
         }
       }
     } else {
       if (liveSessionTimer) {
-        liveSessionTimer.textContent = 'Sleep Ratio: 0% (Min 90%) | Actual Sleep: 0m (Min 60m)';
+        liveSessionTimer.textContent = 'Sleep Duration Filter: Need ≥90% Sleep Waves & 60m Sleep Time';
         liveSessionTimer.style.color = 'var(--text-muted)';
       }
     }
@@ -295,6 +343,14 @@ document.addEventListener('DOMContentLoaded', () => {
           serverIpDisplay.textContent = msg.data.serverIp || window.location.hostname;
           updatePairingUI(msg.data.pairedDevice);
           updateSessionStatusUI(msg.data.activeSession, msg.data.completedSessions);
+          updateSerialStatusUI(msg.data.serialStatus);
+          if (msg.data.serialLogs) {
+            msg.data.serialLogs.forEach(l => appendSerialLog(l));
+          }
+        } else if (msg.type === 'SERIAL_LOG') {
+          appendSerialLog(msg.data.log);
+        } else if (msg.type === 'SERIAL_STATUS') {
+          updateSerialStatusUI(msg.data);
         } else if (msg.type === 'TELEMETRY_UPDATE') {
           if (msg.data.neuralState) {
             updateNeuralStateUI(msg.data.neuralState, msg.data.activeSession, msg.data.qualification);
