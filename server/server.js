@@ -275,6 +275,37 @@ function evalSessionQualification(logs) {
   };
 }
 
+// REST API: Direct HTTP Pairing Fallback Endpoint
+app.post('/api/pair', (req, res) => {
+  const { mac } = req.body;
+  const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const clientIp = cleanIpAddress(rawIp);
+  const deviceMac = mac || `ESP32_${clientIp}`;
+
+  let token = store.pairedDevice ? store.pairedDevice.token : null;
+  if (!token) {
+    token = `RS-PAIR-${Math.floor(100000 + Math.random() * 900000)}`;
+  }
+
+  store.pairedDevice = {
+    mac: deviceMac,
+    ip: clientIp,
+    token: token,
+    pairedAt: store.pairedDevice ? store.pairedDevice.pairedAt : Date.now(),
+    lastSeen: Date.now()
+  };
+  saveStore();
+  broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
+  console.log(`[HTTP PAIR SUCCESS] Device ${deviceMac} (${clientIp}) paired with token ${token}`);
+
+  res.json({
+    status: 'ok',
+    token: token,
+    server_ip: getLocalIpAddress(),
+    server_port: HTTP_PORT
+  });
+});
+
 // REST API: ESP32 Sleep Telemetry & Session Completion Endpoint
 app.post('/api/sleep-data', (req, res) => {
   const telemetry = req.body;
@@ -283,12 +314,24 @@ app.post('/api/sleep-data', (req, res) => {
     return res.status(400).json({ status: 'error', error: 'Missing required parameters' });
   }
 
-  if (!store.pairedDevice || store.pairedDevice.token !== telemetry.token) {
+  const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const clientIp = cleanIpAddress(rawIp);
+
+  if (!store.pairedDevice) {
+    store.pairedDevice = {
+      mac: telemetry.mac,
+      ip: clientIp,
+      token: telemetry.token,
+      pairedAt: Date.now(),
+      lastSeen: Date.now()
+    };
+    saveStore();
+    broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
+    console.log(`[TELEMETRY AUTO-PAIR] ESP32 ${telemetry.mac} auto-paired on telemetry request!`);
+  } else if (store.pairedDevice.token !== telemetry.token && store.pairedDevice.mac !== telemetry.mac) {
     return res.status(401).json({ status: 'unpaired', error: 'Device not paired' });
   }
 
-  const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  const clientIp = cleanIpAddress(rawIp);
   store.pairedDevice.lastSeen = Date.now();
   store.pairedDevice.ip = clientIp;
 

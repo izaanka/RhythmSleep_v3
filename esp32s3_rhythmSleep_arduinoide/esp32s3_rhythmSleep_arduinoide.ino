@@ -1093,7 +1093,7 @@ void handlePairingAndTelemetry() {
     return;
   }
 
-  // Unpaired State: Broadcast DISCOVER via UDP to Port 8888
+  // Unpaired State: Broadcast DISCOVER via UDP & HTTP Fallback
   if (!isPaired) {
     if (millis() - lastUDPBroadcast >= 3000) {
       lastUDPBroadcast = millis();
@@ -1101,10 +1101,63 @@ void handlePairingAndTelemetry() {
       String macStr = WiFi.macAddress();
       String discoverMsg = "{\"type\":\"DISCOVER\",\"mac\":\"" + macStr + "\",\"model\":\"RhythmSleep_v3\"}";
       
+      // 1. Global Broadcast
       udpSocket.beginPacket("255.255.255.255", 8888);
       udpSocket.print(discoverMsg);
       udpSocket.endPacket();
-      Serial.println("[UDP DISCOVER] Sent pairing broadcast to 255.255.255.255:8888");
+
+      // 2. Subnet Broadcast (e.g. 192.168.1.255)
+      IPAddress localIP = WiFi.localIP();
+      IPAddress subnetBC(localIP[0], localIP[1], localIP[2], 255);
+      udpSocket.beginPacket(subnetBC, 8888);
+      udpSocket.print(discoverMsg);
+      udpSocket.endPacket();
+
+      // 3. Unicast to Gateway
+      IPAddress gwIP = WiFi.gatewayIP();
+      if (gwIP[0] != 0) {
+        udpSocket.beginPacket(gwIP, 8888);
+        udpSocket.print(discoverMsg);
+        udpSocket.endPacket();
+      }
+
+      // 4. HTTP Direct Pairing Fallback
+      String targetHost = (serverIP.length() > 0) ? serverIP : gwIP.toString();
+      if (targetHost.length() > 0 && targetHost != "0.0.0.0") {
+        HTTPClient httpPair;
+        httpPair.begin("http://" + targetHost + ":3000/api/pair");
+        httpPair.addHeader("Content-Type", "application/json");
+        httpPair.setTimeout(2000);
+        String pairReqBody = "{\"mac\":\"" + macStr + "\",\"type\":\"DISCOVER\"}";
+        int pairCode = httpPair.POST(pairReqBody);
+        if (pairCode == 200) {
+          String payload = httpPair.getString();
+          int tokIdx = payload.indexOf("\"token\":\"");
+          int ipIdx = payload.indexOf("\"server_ip\":\"");
+          if (tokIdx != -1) {
+            int tokEnd = payload.indexOf("\"", tokIdx + 9);
+            if (tokEnd != -1) {
+              pairToken = payload.substring(tokIdx + 9, tokEnd);
+              if (ipIdx != -1) {
+                int ipEnd = payload.indexOf("\"", ipIdx + 13);
+                if (ipEnd != -1) serverIP = payload.substring(ipIdx + 13, ipEnd);
+              } else {
+                serverIP = targetHost;
+              }
+              isPaired = true;
+              preferences.begin("rhythm_cfg", false);
+              preferences.putString("server_ip", serverIP);
+              preferences.putString("token", pairToken);
+              preferences.putBool("is_paired", true);
+              preferences.end();
+              Serial.printf("[HTTP PAIR SUCCESS] Saved Server IP: %s | Token: %s\n", serverIP.c_str(), pairToken.c_str());
+              fetchServerTime();
+            }
+          }
+        }
+        httpPair.end();
+      }
+      Serial.println("[DISCOVER BROADCAST] Sent UDP multi-target broadcast & HTTP fallback");
     }
 
     // Check incoming UDP PAIR_ACK packet
