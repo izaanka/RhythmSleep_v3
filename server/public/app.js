@@ -155,31 +155,33 @@ document.addEventListener('DOMContentLoaded', () => {
     let latestState = neuralState || lastNeuralState;
     if (neuralState) lastNeuralState = neuralState;
 
-    // Active session status banner
-    if (activeSession) {
-      sessionStatusBanner.className = 'session-banner banner-in-progress';
-      const isConfirmedSleep = latestState && (
-        latestState.stage === 'Light Sleep' || 
-        latestState.stage === 'Deep Sleep' || 
-        latestState.stage === 'REM Sleep' ||
-        (latestState.stageCode >= 1 && latestState.stageCode <= 3)
-      );
+    // Active session status banner (if present in DOM)
+    if (sessionStatusBanner) {
+      if (activeSession) {
+        sessionStatusBanner.className = 'session-banner banner-in-progress';
+        const isConfirmedSleep = latestState && (
+          latestState.stage === 'Light Sleep' || 
+          latestState.stage === 'Deep Sleep' || 
+          latestState.stage === 'REM Sleep' ||
+          (latestState.stageCode >= 1 && latestState.stageCode <= 3)
+        );
 
-      if (isConfirmedSleep) {
-        bannerTitle.textContent = `${latestState.stage} in Progress...`;
-        bannerSub.textContent = `Confirmed sleeping state (${latestState.stage}, ${(latestState.certainty || 90).toFixed(0)}% confidence). Recording sleep telemetry.`;
+        if (isConfirmedSleep) {
+          if (bannerTitle) bannerTitle.textContent = `${latestState.stage} in Progress...`;
+          if (bannerSub) bannerSub.textContent = `Confirmed sleeping state (${latestState.stage}, ${(latestState.certainty || 90).toFixed(0)}% confidence). Recording sleep telemetry.`;
+        } else {
+          if (bannerTitle) bannerTitle.textContent = 'Pre-Sleep Monitoring (Awake)';
+          if (bannerSub) bannerSub.textContent = 'Tracking session active. Monitoring brainwaves — "Sleep in Progress" will activate automatically as soon as sleep is detected.';
+        }
+        if (btnForceComplete) btnForceComplete.classList.remove('hidden');
+        if (btnStartSession) btnStartSession.classList.add('hidden');
       } else {
-        bannerTitle.textContent = 'Pre-Sleep Monitoring (Awake)';
-        bannerSub.textContent = 'Tracking session active. Monitoring brainwaves — "Sleep in Progress" will activate automatically as soon as sleep is detected.';
+        sessionStatusBanner.className = 'session-banner banner-completed';
+        if (bannerTitle) bannerTitle.textContent = 'Device Ready / Sleep Idle';
+        if (bannerSub) bannerSub.textContent = 'ESP32 is connected in IDLE mode. Start sleep tracking on your ESP32 (press OK on Menu 1) or click below to begin session.';
+        if (btnForceComplete) btnForceComplete.classList.add('hidden');
+        if (btnStartSession) btnStartSession.classList.remove('hidden');
       }
-      btnForceComplete.classList.remove('hidden');
-      if (btnStartSession) btnStartSession.classList.add('hidden');
-    } else {
-      sessionStatusBanner.className = 'session-banner banner-completed';
-      bannerTitle.textContent = 'Device Ready / Sleep Idle';
-      bannerSub.textContent = 'ESP32 is connected in IDLE mode. Start sleep tracking on your ESP32 (press OK on Menu 1) or click below to begin session.';
-      btnForceComplete.classList.add('hidden');
-      if (btnStartSession) btnStartSession.classList.remove('hidden');
     }
   }
 
