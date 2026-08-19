@@ -183,11 +183,33 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  let actualMac = '--:--:--:--:--:--';
+  let isMacRevealed = false;
+
+  function updateMacDisplay() {
+    if (isMacRevealed) {
+      deviceMacEl.textContent = actualMac;
+      deviceMacEl.title = 'Click to hide MAC Address';
+    } else {
+      deviceMacEl.textContent = actualMac !== '--:--:--:--:--:--' ? '•••••••••••• (Click to reveal)' : '--:--:--:--:--:--';
+      deviceMacEl.title = 'Click to show MAC Address';
+    }
+  }
+
+  if (deviceMacEl) {
+    deviceMacEl.style.cursor = 'pointer';
+    deviceMacEl.addEventListener('click', () => {
+      isMacRevealed = !isMacRevealed;
+      updateMacDisplay();
+    });
+  }
+
   function updatePairingUI(pairedDevice) {
     if (pairedDevice && pairedDevice.mac) {
       pairingStatusBadge.textContent = 'PAIRED';
       pairingStatusBadge.className = 'badge badge-connected';
-      deviceMacEl.textContent = pairedDevice.mac;
+      actualMac = pairedDevice.mac;
+      updateMacDisplay();
       deviceIpEl.textContent = pairedDevice.ip || '---';
       deviceTokenEl.textContent = pairedDevice.token || '---';
       
@@ -200,7 +222,8 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       pairingStatusBadge.textContent = 'UNPAIRED';
       pairingStatusBadge.className = 'badge badge-disconnected';
-      deviceMacEl.textContent = '--:--:--:--:--:--';
+      actualMac = '--:--:--:--:--:--';
+      updateMacDisplay();
       deviceIpEl.textContent = '---.---.---.---';
       deviceTokenEl.textContent = 'NONE';
       deviceLastSeenEl.textContent = 'Never';
