@@ -39,7 +39,7 @@
 #define BTN_MENU_PIN   11 // BACK / MENU Button (GPIO 11)
 
 // --- Haptic Vibration Motor Pin ---
-#define PIN_VIBRATION  21
+#define PIN_VIBRATION  14
 
 // --- ST7789 2.8" TFT Display Pins ---
 #define TFT_MOSI       4   // Shared SPI MOSI
