@@ -455,7 +455,10 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const res = await fetch('/api/unpair', { method: 'POST' });
       const data = await res.json();
-      if (data.status === 'ok') showMessage('Device unpaired.');
+      if (data.status === 'ok') {
+        updatePairingUI(null);
+        showMessage('Device unpaired.');
+      }
     } catch (err) { showMessage('Network error.', true); }
   });
 
