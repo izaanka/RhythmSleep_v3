@@ -8,6 +8,13 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const os = require('os');
 
+process.on('uncaughtException', (err) => {
+  console.error('[UNCAUGHT EXCEPTION]', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[UNHANDLED REJECTION]', reason);
+});
+
 const HTTP_PORT = process.env.PORT || 3000;
 const UDP_PORT = process.env.UDP_PORT || 8888;
 const DATA_DIR = path.join(__dirname, 'data');
