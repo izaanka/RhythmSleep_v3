@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const deviceTokenEl = document.getElementById('device-token');
   const deviceLastSeenEl = document.getElementById('device-last-seen');
 
+  const btnPair = document.getElementById('btn-pair');
   const btnUnpair = document.getElementById('btn-unpair');
   const btnFactoryReset = document.getElementById('btn-factory-reset');
   const actionMessage = document.getElementById('action-message');
@@ -222,6 +223,8 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         deviceLastSeenEl.textContent = 'Just now';
       }
+      if (btnPair) btnPair.classList.add('hidden');
+      if (btnUnpair) btnUnpair.classList.remove('hidden');
     } else {
       pairingStatusBadge.textContent = 'UNPAIRED';
       pairingStatusBadge.className = 'badge badge-disconnected';
@@ -230,6 +233,8 @@ document.addEventListener('DOMContentLoaded', () => {
       deviceIpEl.textContent = '---.---.---.---';
       deviceTokenEl.textContent = 'NONE';
       deviceLastSeenEl.textContent = 'Never';
+      if (btnPair) btnPair.classList.remove('hidden');
+      if (btnUnpair) btnUnpair.classList.add('hidden');
     }
   }
 
@@ -449,7 +454,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Unpair & Factory Reset Buttons
+  // Pair, Unpair & Factory Reset Buttons
+  if (btnPair) {
+    btnPair.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/pair', { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          if (data.pairedDevice) {
+            updatePairingUI(data.pairedDevice);
+            showMessage('Device paired successfully!');
+          } else {
+            showMessage('Pairing mode enabled. Listening for ESP32...');
+          }
+        }
+      } catch (err) { showMessage('Network error.', true); }
+    });
+  }
+
   if (btnUnpair) {
     btnUnpair.addEventListener('click', async () => {
       try {

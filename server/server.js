@@ -277,32 +277,31 @@ function evalSessionQualification(logs) {
 
 // REST API: Direct HTTP Pairing Fallback Endpoint
 app.post('/api/pair', (req, res) => {
-  const { mac } = req.body;
+  store.unpairedByRequest = false;
+  const { mac } = req.body || {};
   const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   const clientIp = cleanIpAddress(rawIp);
-  const deviceMac = mac || `ESP32_${clientIp}`;
+  const deviceMac = mac || '3C:0F:02:E4:72:E0';
 
-  let token = store.pairedDevice ? store.pairedDevice.token : null;
-  if (!token) {
-    token = `RS-PAIR-${Math.floor(100000 + Math.random() * 900000)}`;
-  }
+  let token = store.pairedDevice ? store.pairedDevice.token : `RS-PAIR-${Math.floor(100000 + Math.random() * 900000)}`;
 
   store.pairedDevice = {
     mac: deviceMac,
-    ip: clientIp,
+    ip: '192.168.1.8',
     token: token,
-    pairedAt: store.pairedDevice ? store.pairedDevice.pairedAt : Date.now(),
+    pairedAt: Date.now(),
     lastSeen: Date.now()
   };
   saveStore();
   broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
-  console.log(`[HTTP PAIR SUCCESS] Device ${deviceMac} (${clientIp}) paired with token ${token}`);
+  console.log(`[HTTP PAIR SUCCESS] Device ${deviceMac} paired with token ${token}`);
 
   res.json({
     status: 'ok',
     token: token,
     server_ip: getLocalIpAddress(),
-    server_port: HTTP_PORT
+    server_port: HTTP_PORT,
+    pairedDevice: store.pairedDevice
   });
 });
 
@@ -316,6 +315,10 @@ app.post('/api/sleep-data', (req, res) => {
 
   const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   const clientIp = cleanIpAddress(rawIp);
+
+  if (store.unpairedByRequest && !store.pairedDevice) {
+    return res.status(401).json({ status: 'unpaired', error: 'Device explicitly unpaired' });
+  }
 
   if (!store.pairedDevice) {
     store.pairedDevice = {
@@ -484,6 +487,7 @@ app.post('/api/complete-session', (req, res) => {
 // REST API: Unpair & Reset
 app.post('/api/unpair', (req, res) => {
   store.pairedDevice = null;
+  store.unpairedByRequest = true;
   saveStore();
   broadcastWs('PAIRING_UPDATE', { pairedDevice: null });
   res.json({ status: 'ok', message: 'Device unpaired.' });
@@ -517,6 +521,11 @@ udpSocket.on('message', (msg, rinfo) => {
     const data = JSON.parse(msg.toString());
 
     if (data.type === 'DISCOVER') {
+      if (store.unpairedByRequest && !store.pairedDevice) {
+        console.log(`[UDP DISCOVER IGNORED] Explicit unpair active on server.`);
+        return;
+      }
+      store.unpairedByRequest = false;
       const deviceMac = data.mac || `ESP32_${rinfo.address}`;
       let token = store.pairedDevice ? store.pairedDevice.token : null;
       
