@@ -1004,8 +1004,8 @@ void initWiFiProvisioning() {
     WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
 
     unsigned long startMs = millis();
-    while (WiFi.status() != WL_CONNECTED && (millis() - startMs < 2000)) {
-      delay(100);
+    while (WiFi.status() != WL_CONNECTED && (millis() - startMs < 6000)) {
+      delay(150);
       Serial.print(".");
     }
     Serial.println();
@@ -1019,7 +1019,7 @@ void initWiFiProvisioning() {
       fetchServerTime();
       return;
     } else {
-      Serial.println("[WIFI NOTICE] Connecting in background...");
+      Serial.println("[WIFI NOTICE] Saved Wi-Fi connection timed out. Starting SoftAP fallback.");
     }
   }
 
