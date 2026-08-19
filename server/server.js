@@ -120,73 +120,6 @@ function broadcastWs(type, data) {
   });
 }
 
-const { SerialPort } = require('serialport');
-const { ReadlineParser } = require('@serialport/parser-readline');
-
-let serialLogs = [];
-let serialPortInstance = null;
-let serialConnected = false;
-let serialPortPath = '/dev/ttyACM0';
-
-function initSerialPort() {
-  SerialPort.list().then(ports => {
-    const found = ports.find(p => p.path.includes('ttyACM') || p.path.includes('ttyUSB') || p.vendorId);
-    if (found) serialPortPath = found.path;
-
-    try {
-      if (serialPortInstance && serialPortInstance.isOpen) {
-        serialPortInstance.close();
-      }
-
-      serialPortInstance = new SerialPort({ path: serialPortPath, baudRate: 115200, autoOpen: false });
-      
-      serialPortInstance.open((err) => {
-        if (err) {
-          serialConnected = false;
-          broadcastWs('SERIAL_STATUS', { connected: false, port: serialPortPath, error: err.message });
-          setTimeout(initSerialPort, 5000);
-          return;
-        }
-
-        serialConnected = true;
-        console.log(`[SERIAL MONITOR] Opened connection on ${serialPortPath} @ 115200 baud.`);
-        broadcastWs('SERIAL_STATUS', { connected: true, port: serialPortPath });
-
-        const parser = serialPortInstance.pipe(new ReadlineParser({ delimiter: '\n' }));
-        parser.on('data', (line) => {
-          const cleanLine = line.trim();
-          if (cleanLine) {
-            const timeStr = new Date().toLocaleTimeString();
-            const logEntry = `[${timeStr}] ${cleanLine}`;
-            serialLogs.push(logEntry);
-            if (serialLogs.length > 200) serialLogs.shift();
-            broadcastWs('SERIAL_LOG', { log: logEntry });
-          }
-        });
-      });
-
-      serialPortInstance.on('close', () => {
-        serialConnected = false;
-        broadcastWs('SERIAL_STATUS', { connected: false, port: serialPortPath });
-        setTimeout(initSerialPort, 5000);
-      });
-
-      serialPortInstance.on('error', (err) => {
-        serialConnected = false;
-        broadcastWs('SERIAL_STATUS', { connected: false, port: serialPortPath, error: err.message });
-      });
-
-    } catch (e) {
-      serialConnected = false;
-      setTimeout(initSerialPort, 5000);
-    }
-  }).catch(() => {
-    setTimeout(initSerialPort, 5000);
-  });
-}
-
-initSerialPort();
-
 wss.on('connection', (ws) => {
   console.log('[WS] Client connected to sleep dashboard.');
   ws.send(JSON.stringify({
@@ -195,9 +128,7 @@ wss.on('connection', (ws) => {
       pairedDevice: store.pairedDevice,
       activeSession: store.activeSession,
       completedSessions: store.completedSessions.slice(-10),
-      serverIp: getLocalIpAddress(),
-      serialStatus: { connected: serialConnected, port: serialPortPath },
-      serialLogs: serialLogs.slice(-50)
+      serverIp: getLocalIpAddress()
     }
   }));
 });
@@ -205,29 +136,6 @@ wss.on('connection', (ws) => {
 // REST API: Get Server Time
 app.get('/api/time', (req, res) => {
   res.json({ status: 'ok', server_time: Math.floor(Date.now() / 1000) });
-});
-
-// REST API: Get Serial Console Logs & Status
-app.get('/api/serial-logs', (req, res) => {
-  res.json({
-    connected: serialConnected,
-    port: serialPortPath,
-    logs: serialLogs
-  });
-});
-
-// REST API: Send Command to ESP32 via Serial
-app.post('/api/serial-command', (req, res) => {
-  const { command } = req.body;
-  if (!command) return res.status(400).json({ error: 'Command parameter required' });
-  if (!serialConnected || !serialPortInstance) {
-    return res.status(533).json({ error: 'Serial port disconnected or locked by uploader' });
-  }
-  serialPortInstance.write(command + '\n', (err) => {
-    if (err) return res.status(500).json({ error: err.message });
-    console.log(`[SERIAL CMD SENT] -> ${command}`);
-    res.json({ status: 'ok', commandSent: command });
-  });
 });
 
 // REST API: Get Completed Sleep Sessions & Active Session State
