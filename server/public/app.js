@@ -287,18 +287,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (liveSessionTimer) {
         if (isQualified) {
-          liveSessionTimer.textContent = `Sleep Ratio: ${ratio}% ✅ | Actual Sleep: ${actualMin}m ✅ (Log Qualified!)`;
+          liveSessionTimer.textContent = `Sleep Ratio: ${ratio}% (Passed) | Actual Sleep: ${actualMin}m (Passed)`;
           liveSessionTimer.style.color = 'var(--accent-green)';
         } else {
-          const ratioStatus = ratio >= 90 ? '✅' : '⏳ (Need ≥90%)';
-          const durStatus = actualMin >= 60 ? '✅' : '⏳ (Need ≥60m)';
+          const ratioStatus = ratio >= 90 ? '(Passed)' : '(Min 90%)';
+          const durStatus = actualMin >= 60 ? '(Passed)' : '(Min 60m)';
           liveSessionTimer.textContent = `Sleep Ratio: ${ratio}% ${ratioStatus} | Actual Sleep: ${actualMin}m ${durStatus}`;
           liveSessionTimer.style.color = 'var(--accent-warning)';
         }
       }
     } else {
       if (liveSessionTimer) {
-        liveSessionTimer.textContent = 'Sleep Duration Filter: Need ≥90% Sleep Waves & 60m Sleep Time';
+        liveSessionTimer.textContent = 'Sleep Ratio: 0% (Min 90%) | Actual Sleep: 0m (Min 60m)';
         liveSessionTimer.style.color = 'var(--text-muted)';
       }
     }
