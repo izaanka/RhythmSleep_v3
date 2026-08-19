@@ -130,6 +130,44 @@ function broadcastWs(type, data) {
   });
 }
 
+function sendPairAckReliable(targetIp, token, sendCount = 3) {
+  const localIp = getLocalIpAddress();
+  const ackPayload = JSON.stringify({
+    type: 'PAIR_ACK',
+    server_ip: localIp,
+    server_port: HTTP_PORT,
+    token: token
+  });
+
+  const sendBurst = () => {
+    try {
+      udpSocket.send(ackPayload, UDP_PORT, '255.255.255.255', () => {});
+      udpSocket.send(ackPayload, UDP_PORT, '192.168.1.255', () => {});
+      if (targetIp && targetIp !== '255.255.255.255' && targetIp !== '127.0.0.1' && targetIp !== '---') {
+        udpSocket.send(ackPayload, UDP_PORT, targetIp, () => {});
+      }
+    } catch (e) {
+      console.error('[UDP SEND ERROR]', e.message);
+    }
+  };
+
+  for (let i = 0; i < sendCount; i++) {
+    setTimeout(sendBurst, i * 150);
+  }
+
+  // Also send over Serial if available
+  if (serialConnected && serialPortInstance) {
+    for (let i = 0; i < sendCount; i++) {
+      setTimeout(() => {
+        if (serialConnected && serialPortInstance) {
+          serialPortInstance.write(`PAIR:${localIp}:${token}\n`);
+        }
+      }, i * 200);
+    }
+    console.log(`[SERIAL PAIR SENT] PAIR:${localIp}:${token}`);
+  }
+}
+
 const { SerialPort } = require('serialport');
 const { ReadlineParser } = require('@serialport/parser-readline');
 
@@ -162,6 +200,15 @@ function initSerialPort() {
         console.log(`[SERIAL MONITOR] Opened connection on ${serialPortPath} @ 115200 baud.`);
         broadcastWs('SERIAL_STATUS', { connected: true, port: serialPortPath });
 
+        // If paired device exists, notify ESP32 immediately on serial connection
+        if (store.pairedDevice && store.pairedDevice.token) {
+          setTimeout(() => {
+            if (serialPortInstance && serialConnected) {
+              serialPortInstance.write(`PAIR:${getLocalIpAddress()}:${store.pairedDevice.token}\n`);
+            }
+          }, 1000);
+        }
+
         const parser = serialPortInstance.pipe(new ReadlineParser({ delimiter: '\n' }));
         parser.on('data', (line) => {
           const cleanLine = line.trim();
@@ -172,23 +219,36 @@ function initSerialPort() {
             if (serialLogs.length > 200) serialLogs.shift();
             broadcastWs('SERIAL_LOG', { log: logEntry });
 
-            // Auto-detect IP from ESP32 boot/WiFi logs if pairing mode is active
-            if (cleanLine.includes('[WIFI SUCCESS] Connected! IP:')) {
+            // Auto-detect IP & Discovery from ESP32 boot/WiFi logs
+            if (cleanLine.includes('[WIFI SUCCESS] Connected! IP:') || cleanLine.includes('[DISCOVER') || cleanLine.startsWith('DISCOVER:')) {
+              let detectedIp = '192.168.1.8';
               const ipMatch = cleanLine.match(/IP:\s*([0-9\.]+)/);
-              if (ipMatch && !store.unpairedByRequest) {
-                const detectedIp = ipMatch[1];
+              if (ipMatch) {
+                detectedIp = ipMatch[1];
+              } else if (store.pairedDevice && store.pairedDevice.ip && store.pairedDevice.ip !== '---') {
+                detectedIp = store.pairedDevice.ip;
+              }
+
+              if (!store.unpairedByRequest) {
                 const token = store.pairedDevice ? store.pairedDevice.token : `RS-PAIR-${Math.floor(100000 + Math.random() * 900000)}`;
                 store.pairedDevice = {
                   mac: store.pairedDevice ? store.pairedDevice.mac : '3C:0F:02:E4:72:E0',
                   ip: detectedIp,
                   token: token,
                   pairedAt: store.pairedDevice ? store.pairedDevice.pairedAt : Date.now(),
-                  lastSeen: Date.now()
+                  lastSeen: Date.now(),
+                  isOnline: true
                 };
                 saveStore();
                 broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
+                sendPairAckReliable(detectedIp, token, 3);
+              }
+            } else if (cleanLine.startsWith('HEARTBEAT') || cleanLine.includes('[HEARTBEAT]')) {
+              if (store.pairedDevice) {
+                store.pairedDevice.lastSeen = Date.now();
+                store.pairedDevice.isOnline = true;
                 if (serialPortInstance && serialConnected) {
-                  serialPortInstance.write(`PAIR:${getLocalIpAddress()}:${token}\n`);
+                  serialPortInstance.write(`HEARTBEAT_ACK:${getLocalIpAddress()}:${store.pairedDevice.token}\n`);
                 }
               }
             }
@@ -296,6 +356,61 @@ function evalSessionQualification(logs) {
   };
 }
 
+// REST API: ESP32 Handshake & Heartbeat Endpoint (Keeps connection alive and verifies pairing)
+app.post('/api/heartbeat', (req, res) => {
+  const { mac, token } = req.body || {};
+  const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const clientIp = cleanIpAddress(rawIp);
+
+  if (store.unpairedByRequest && !store.pairedDevice) {
+    return res.status(401).json({ status: 'unpaired', error: 'Device explicitly unpaired' });
+  }
+
+  if (!store.pairedDevice) {
+    const assignedToken = token || `RS-PAIR-${Math.floor(100000 + Math.random() * 900000)}`;
+    store.pairedDevice = {
+      mac: mac || 'ESP32_DEV',
+      ip: (clientIp !== '127.0.0.1' && clientIp !== '---') ? clientIp : '192.168.1.8',
+      token: assignedToken,
+      pairedAt: Date.now(),
+      lastSeen: Date.now(),
+      isOnline: true
+    };
+    saveStore();
+    broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
+    console.log(`[HEARTBEAT AUTO-PAIR] ESP32 ${store.pairedDevice.mac} auto-paired via heartbeat handshake!`);
+  } else {
+    // If token or MAC mismatch
+    if (token && store.pairedDevice.token && store.pairedDevice.token !== token && mac && store.pairedDevice.mac && store.pairedDevice.mac !== mac) {
+      console.log(`[HEARTBEAT REJECTED] Mismatched device token/mac: received ${mac}/${token}`);
+      return res.status(401).json({ status: 'unpaired', error: 'Token/MAC mismatch' });
+    }
+
+    const wasOffline = !store.pairedDevice.isOnline;
+    store.pairedDevice.lastSeen = Date.now();
+    if (clientIp !== '127.0.0.1' && clientIp !== '---') {
+      store.pairedDevice.ip = clientIp;
+    }
+    if (mac) store.pairedDevice.mac = mac;
+    store.pairedDevice.isOnline = true;
+
+    if (wasOffline) {
+      console.log(`[DEVICE ONLINE] ESP32 ${store.pairedDevice.mac} is back ONLINE.`);
+      broadcastWs('DEVICE_STATUS', { online: true, pairedDevice: store.pairedDevice });
+      broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
+    }
+  }
+
+  res.json({
+    status: 'ok',
+    server_time: Math.floor(Date.now() / 1000),
+    paired: true,
+    token: store.pairedDevice.token,
+    server_ip: getLocalIpAddress(),
+    server_port: HTTP_PORT
+  });
+});
+
 // REST API: Direct HTTP Pairing Fallback Endpoint
 app.post('/api/pair', (req, res) => {
   store.unpairedByRequest = false;
@@ -311,27 +426,14 @@ app.post('/api/pair', (req, res) => {
     ip: (clientIp !== '127.0.0.1' && clientIp !== '---') ? clientIp : '192.168.1.8',
     token: token,
     pairedAt: Date.now(),
-    lastSeen: Date.now()
+    lastSeen: Date.now(),
+    isOnline: true
   };
   saveStore();
   broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
   console.log(`[HTTP PAIR SUCCESS] Device ${deviceMac} paired with token ${token}`);
 
-  // Send PAIR command over USB Serial directly to ESP32
-  if (serialConnected && serialPortInstance) {
-    serialPortInstance.write(`PAIR:${getLocalIpAddress()}:${token}\n`);
-    console.log(`[SERIAL PAIR SENT] PAIR:${getLocalIpAddress()}:${token}`);
-  }
-
-  // Send UDP ACK Broadcasts
-  const ackPayload = JSON.stringify({
-    type: 'PAIR_ACK',
-    server_ip: getLocalIpAddress(),
-    server_port: HTTP_PORT,
-    token: token
-  });
-  udpSocket.send(ackPayload, 8888, '255.255.255.255', () => {});
-  udpSocket.send(ackPayload, 8888, '192.168.1.255', () => {});
+  sendPairAckReliable(store.pairedDevice.ip, token, 3);
 
   res.json({
     status: 'ok',
@@ -372,32 +474,18 @@ app.post('/api/manual-pair', async (req, res) => {
     console.log(`[HTTP MANUAL PAIR NOTICE] Could not reach http://${targetIp}/api/pair directly (${err.message}). Using fallback handshake.`);
   }
 
-  // Send UDP ACK directly to target IP
-  const ackPayload = JSON.stringify({
-    type: 'PAIR_ACK',
-    server_ip: getLocalIpAddress(),
-    server_port: HTTP_PORT,
-    token: token
-  });
-  udpSocket.send(ackPayload, 8888, targetIp, () => {});
-  udpSocket.send(ackPayload, 8888, '255.255.255.255', () => {});
-  udpSocket.send(ackPayload, 8888, '192.168.1.255', () => {});
-
-  // Send Serial PAIR command if USB serial connected
-  if (serialConnected && serialPortInstance) {
-    serialPortInstance.write(`PAIR:${getLocalIpAddress()}:${token}\n`);
-    console.log(`[SERIAL PAIR SENT] PAIR:${getLocalIpAddress()}:${token}`);
-  }
-
   store.pairedDevice = {
     mac: espMac,
     ip: targetIp,
     token: token,
     pairedAt: Date.now(),
-    lastSeen: Date.now()
+    lastSeen: Date.now(),
+    isOnline: true
   };
   saveStore();
   broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
+
+  sendPairAckReliable(targetIp, token, 3);
 
   res.json({
     status: 'ok',
@@ -645,24 +733,16 @@ udpSocket.on('message', (msg, rinfo) => {
         ip: cleanIpAddress(rinfo.address),
         token: token,
         pairedAt: store.pairedDevice ? store.pairedDevice.pairedAt : Date.now(),
-        lastSeen: Date.now()
+        lastSeen: Date.now(),
+        isOnline: true
       };
       saveStore();
 
-      const ackPayload = JSON.stringify({
-        type: 'PAIR_ACK',
-        server_ip: getLocalIpAddress(),
-        server_port: HTTP_PORT,
-        token: token
-      });
-
-      udpSocket.send(ackPayload, rinfo.port, rinfo.address, (err) => {
-        if (!err) {
-          console.log(`[UDP PAIR_ACK SENT] Token ${token} sent to ${rinfo.address}:${rinfo.port}`);
-        }
-      });
+      console.log(`[UDP DISCOVER RECEIVED] From ${rinfo.address}:${rinfo.port} (MAC: ${deviceMac})`);
+      sendPairAckReliable(cleanIpAddress(rinfo.address), token, 3);
 
       broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
+      broadcastWs('DEVICE_STATUS', { online: true, pairedDevice: store.pairedDevice });
     }
   } catch (err) {
     console.error('[UDP PARSE ERROR]', err.message);
@@ -670,3 +750,17 @@ udpSocket.on('message', (msg, rinfo) => {
 });
 
 udpSocket.bind(UDP_PORT);
+
+// Liveness Heartbeat Monitor (Runs every 5 seconds)
+setInterval(() => {
+  if (store.pairedDevice && store.pairedDevice.lastSeen) {
+    const offlineThreshold = 25000; // 25s threshold (heartbeats occur every 5-10s)
+    const isNowOnline = (Date.now() - store.pairedDevice.lastSeen) < offlineThreshold;
+    if (store.pairedDevice.isOnline !== isNowOnline) {
+      store.pairedDevice.isOnline = isNowOnline;
+      broadcastWs('DEVICE_STATUS', { online: isNowOnline, pairedDevice: store.pairedDevice });
+      broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
+      console.log(`[LIVENESS MONITOR] Device is now ${isNowOnline ? 'ONLINE' : 'OFFLINE'} (Last seen ${Math.round((Date.now() - store.pairedDevice.lastSeen)/1000)}s ago)`);
+    }
+  }
+}, 5000);

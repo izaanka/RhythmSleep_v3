@@ -293,6 +293,8 @@ bool isAPMode = false;
 bool sessionCompletedTrigger = false;
 unsigned long lastUDPBroadcast = 0;
 unsigned long lastTelemetrySend = 0;
+unsigned long lastHeartbeatSend = 0;
+uint8_t heartbeatFailCount = 0;
 
 // Menu State: 6 Total Menus
 // 0: Time & Date
@@ -1138,15 +1140,16 @@ void handlePairingAndTelemetry() {
     return;
   }
 
-  // Unpaired State: Broadcast DISCOVER via UDP & HTTP Fallback
+  // --- UNPAIRED STATE: Active Multi-Channel Discovery & Auto-Pairing ---
   if (!isPaired) {
-    if (millis() - lastUDPBroadcast >= 3000) {
+    if (millis() - lastUDPBroadcast >= 2500) {
       lastUDPBroadcast = millis();
 
       String macStr = WiFi.macAddress();
-      String discoverMsg = "{\"type\":\"DISCOVER\",\"mac\":\"" + macStr + "\",\"model\":\"RhythmSleep_v3\"}";
+      String localIpStr = WiFi.localIP().toString();
+      String discoverMsg = "{\"type\":\"DISCOVER\",\"mac\":\"" + macStr + "\",\"ip\":\"" + localIpStr + "\",\"model\":\"RhythmSleep_v3\"}";
       
-      // 1. Global Broadcast
+      // 1. Global Broadcast (255.255.255.255)
       udpSocket.beginPacket("255.255.255.255", 8888);
       udpSocket.print(discoverMsg);
       udpSocket.endPacket();
@@ -1160,20 +1163,30 @@ void handlePairingAndTelemetry() {
 
       // 3. Unicast to Gateway
       IPAddress gwIP = WiFi.gatewayIP();
-      if (gwIP[0] != 0) {
+      if (gwIP[0] != 0 && gwIP != localIP) {
         udpSocket.beginPacket(gwIP, 8888);
         udpSocket.print(discoverMsg);
         udpSocket.endPacket();
       }
 
-      // 4. HTTP Direct Pairing Fallback
-      String targetHost = (serverIP.length() > 0) ? serverIP : gwIP.toString();
+      // 4. If we had a previously saved server IP, send UDP unicast directly to it
+      if (serverIP.length() > 0 && serverIP != "0.0.0.0" && serverIP != "---") {
+        udpSocket.beginPacket(serverIP.c_str(), 8888);
+        udpSocket.print(discoverMsg);
+        udpSocket.endPacket();
+      }
+
+      // 5. Send Discovery probe over Serial
+      Serial.printf("[DISCOVER PROBE] ESP32 MAC:%s IP:%s (Searching for RhythmSleep Server...)\n", macStr.c_str(), localIpStr.c_str());
+
+      // 6. Direct HTTP Pairing Fallback (try saved serverIP first, then gateway)
+      String targetHost = (serverIP.length() > 0 && serverIP != "0.0.0.0" && serverIP != "---") ? serverIP : gwIP.toString();
       if (targetHost.length() > 0 && targetHost != "0.0.0.0") {
         HTTPClient httpPair;
         httpPair.begin("http://" + targetHost + ":3000/api/pair");
         httpPair.addHeader("Content-Type", "application/json");
-        httpPair.setTimeout(2000);
-        String pairReqBody = "{\"mac\":\"" + macStr + "\",\"type\":\"DISCOVER\"}";
+        httpPair.setTimeout(1500);
+        String pairReqBody = "{\"mac\":\"" + macStr + "\",\"ip\":\"" + localIpStr + "\",\"type\":\"DISCOVER\"}";
         int pairCode = httpPair.POST(pairReqBody);
         if (pairCode == 200) {
           String payload = httpPair.getString();
@@ -1190,19 +1203,19 @@ void handlePairingAndTelemetry() {
                 serverIP = targetHost;
               }
               isPaired = true;
+              heartbeatFailCount = 0;
               preferences.begin("rhythm_cfg", false);
               preferences.putString("server_ip", serverIP);
               preferences.putString("token", pairToken);
               preferences.putBool("is_paired", true);
               preferences.end();
-              Serial.printf("[HTTP PAIR SUCCESS] Saved Server IP: %s | Token: %s\n", serverIP.c_str(), pairToken.c_str());
+              Serial.printf("[HTTP PAIR SUCCESS] Paired with Server IP: %s | Token: %s\n", serverIP.c_str(), pairToken.c_str());
               fetchServerTime();
             }
           }
         }
         httpPair.end();
       }
-      Serial.println("[DISCOVER BROADCAST] Sent UDP multi-target broadcast & HTTP fallback");
     }
 
     // Check incoming UDP PAIR_ACK packet
@@ -1226,6 +1239,7 @@ void handlePairingAndTelemetry() {
             serverIP = payload.substring(ipIdx + 13, ipEnd);
             pairToken = payload.substring(tokIdx + 9, tokEnd);
             isPaired = true;
+            heartbeatFailCount = 0;
 
             preferences.begin("rhythm_cfg", false);
             preferences.putString("server_ip", serverIP);
@@ -1233,28 +1247,81 @@ void handlePairingAndTelemetry() {
             preferences.putBool("is_paired", true);
             preferences.end();
 
-            Serial.printf("[PAIR SUCCESS] Saved Server IP: %s | Token: %s\n", serverIP.c_str(), pairToken.c_str());
+            Serial.printf("[UDP PAIR SUCCESS] Connected to Server: %s | Token: %s\n", serverIP.c_str(), pairToken.c_str());
             fetchServerTime();
           }
         }
       }
     }
   } 
-  // Paired State: Send Telemetry POST to Server
+  // --- PAIRED STATE: Handshake Heartbeats & Telemetry Stream ---
   else {
+    // 1. Periodic Time Sync (every 60s)
     static unsigned long lastTimeSyncMs = 0;
     if (millis() - lastTimeSyncMs >= 60000 || lastTimeSyncMs == 0) {
       lastTimeSyncMs = millis();
       fetchServerTime();
     }
 
-    if (millis() - lastTelemetrySend >= 5000) {
+    // 2. Regular Connection Heartbeat Handshake (every 5 seconds)
+    if (millis() - lastHeartbeatSend >= 5000) {
+      lastHeartbeatSend = millis();
+
+      HTTPClient httpHb;
+      String hbUrl = "http://" + serverIP + ":3000/api/heartbeat";
+      httpHb.begin(hbUrl);
+      httpHb.addHeader("Content-Type", "application/json");
+      httpHb.setTimeout(2500);
+
+      String hbBody = "{\"mac\":\"" + WiFi.macAddress() + "\",\"token\":\"" + pairToken + "\"}";
+      int hbCode = httpHb.POST(hbBody);
+
+      if (hbCode == 200) {
+        heartbeatFailCount = 0;
+        String resp = httpHb.getString();
+        int timeIdx = resp.indexOf("\"server_time\":");
+        if (timeIdx != -1) {
+          uint32_t sTime = (uint32_t)resp.substring(timeIdx + 14).toInt();
+          if (sTime > 1700000000 && rtcAvailable) {
+            rtc.adjust(DateTime(sTime));
+          }
+        }
+      } else if (hbCode == 401) {
+        Serial.println("[HEARTBEAT] Server rejected token / marked unpaired. Re-entering discovery mode...");
+        isPaired = false;
+        heartbeatFailCount = 0;
+        preferences.begin("rhythm_cfg", false);
+        preferences.putBool("is_paired", false);
+        preferences.end();
+      } else {
+        heartbeatFailCount++;
+        Serial.printf("[HEARTBEAT WARN] Server heartbeat missed (HTTP %d, Fail count: %d/3)\n", hbCode, heartbeatFailCount);
+        
+        // Also ping over serial
+        Serial.printf("HEARTBEAT:%s:%s\n", WiFi.macAddress().c_str(), pairToken.c_str());
+
+        // If 3 consecutive heartbeats fail (15 seconds of disconnection), drop to discovery for auto-reconnect
+        if (heartbeatFailCount >= 3) {
+          Serial.println("[HEARTBEAT FAILED] Server unreachable after 3 attempts. Auto-reconnecting via discovery...");
+          isPaired = false;
+          heartbeatFailCount = 0;
+          preferences.begin("rhythm_cfg", false);
+          preferences.putBool("is_paired", false);
+          preferences.end();
+        }
+      }
+      httpHb.end();
+    }
+
+    // 3. Telemetry Stream (every 5 seconds)
+    if (isPaired && millis() - lastTelemetrySend >= 5000) {
       lastTelemetrySend = millis();
 
       HTTPClient http;
       String url = "http://" + serverIP + ":3000/api/sleep-data";
       http.begin(url);
       http.addHeader("Content-Type", "application/json");
+      http.setTimeout(2500);
 
       DateTime now = getCurrentTime();
 
@@ -1280,6 +1347,7 @@ void handlePairingAndTelemetry() {
         if (sessionCompletedTrigger) {
           sessionCompletedTrigger = false;
         }
+        heartbeatFailCount = 0;
         String resp = http.getString();
         int timeIdx = resp.indexOf("\"server_time\":");
         if (timeIdx != -1) {
@@ -1291,6 +1359,7 @@ void handlePairingAndTelemetry() {
         if (resp.indexOf("unpaired") != -1 || httpCode == 401) {
           Serial.println("[TELEMETRY UNPAIRED] Server returned unpaired status. Clearing pairing...");
           isPaired = false;
+          heartbeatFailCount = 0;
           preferences.begin("rhythm_cfg", false);
           preferences.putBool("is_paired", false);
           preferences.end();
@@ -1332,6 +1401,7 @@ void handleSerialCommands() {
         serverIP = (secondColon != -1) ? cmd.substring(firstColon + 1, secondColon) : cmd.substring(firstColon + 1);
         pairToken = (secondColon != -1) ? cmd.substring(secondColon + 1) : "RS-PAIR-DIRECT";
         isPaired = true;
+        heartbeatFailCount = 0;
         preferences.begin("rhythm_cfg", false);
         preferences.putString("server_ip", serverIP);
         preferences.putString("token", pairToken);
@@ -1340,8 +1410,19 @@ void handleSerialCommands() {
         Serial.printf("[SERIAL PAIR SUCCESS] Server: %s | Token: %s\n", serverIP.c_str(), pairToken.c_str());
         fetchServerTime();
       }
+    } else if (cmd.startsWith("HEARTBEAT_ACK:")) {
+      int firstColon = cmd.indexOf(':');
+      int secondColon = cmd.indexOf(':', firstColon + 1);
+      if (firstColon != -1) {
+        serverIP = (secondColon != -1) ? cmd.substring(firstColon + 1, secondColon) : cmd.substring(firstColon + 1);
+        pairToken = (secondColon != -1) ? cmd.substring(secondColon + 1) : pairToken;
+        isPaired = true;
+        heartbeatFailCount = 0;
+        Serial.println("[SERIAL HEARTBEAT ACK] Server confirmed connection via Serial.");
+      }
     } else if (cmd == "UNPAIR") {
       isPaired = false;
+      heartbeatFailCount = 0;
       preferences.begin("rhythm_cfg", false);
       preferences.putBool("is_paired", false);
       preferences.end();
