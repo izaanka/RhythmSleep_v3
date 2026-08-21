@@ -36,6 +36,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const actionMessage = document.getElementById('action-message');
 
   let completedSessionsStore = [];
+  let lastNeuralState = null;
+  const btnStartSession = document.getElementById('btn-start-session');
 
   function initChart() {
     const ctx = document.getElementById('hypnogramChart').getContext('2d');
@@ -133,7 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function updateSessionStatusUI(activeSession, completedSessions) {
+  function updateSessionStatusUI(activeSession, completedSessions, neuralState) {
     completedSessionsStore = completedSessions || [];
 
     // Populate session history dropdown
@@ -385,7 +387,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (msg.type === 'INIT_STATE') {
           serverIpDisplay.textContent = msg.data.serverIp || window.location.hostname;
           updatePairingUI(msg.data.pairedDevice);
-          updateSessionStatusUI(msg.data.activeSession, msg.data.completedSessions);
+          updateSessionStatusUI(msg.data.activeSession, msg.data.completedSessions, msg.data.latestNeuralState);
+          if (msg.data.latestNeuralState) {
+            updateNeuralStateUI(msg.data.latestNeuralState, msg.data.activeSession, msg.data.qualification);
+          }
           updateSerialStatusUI(msg.data.serialStatus);
           if (msg.data.serialLogs) {
             msg.data.serialLogs.forEach(l => appendSerialLog(l));
@@ -433,28 +438,32 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Listener for History Select Dropdown
-  sessionHistorySelect.addEventListener('change', (e) => {
-    const idx = parseInt(e.target.value);
-    if (!isNaN(idx) && completedSessionsStore[idx]) {
-      renderCompletedSessionReport(completedSessionsStore[idx]);
-    }
-  });
+  if (sessionHistorySelect) {
+    sessionHistorySelect.addEventListener('change', (e) => {
+      const idx = parseInt(e.target.value);
+      if (!isNaN(idx) && completedSessionsStore[idx]) {
+        renderCompletedSessionReport(completedSessionsStore[idx]);
+      }
+    });
+  }
 
   // Listener for Force Complete Session Button
-  btnForceComplete.addEventListener('click', async () => {
-    try {
-      const res = await fetch('/api/complete-session', { method: 'POST' });
-      const data = await res.json();
-      if (data.status === 'ok') {
-        showMessage('Session marked as completed. Report generated!');
-        fetchSessions();
-      } else {
-        showMessage(data.error || 'Failed to complete session.', true);
+  if (btnForceComplete) {
+    btnForceComplete.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/complete-session', { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          showMessage('Session marked as completed. Report generated!');
+          fetchSessions();
+        } else {
+          showMessage(data.error || 'Failed to complete session.', true);
+        }
+      } catch (err) {
+        showMessage('Error completing session.', true);
       }
-    } catch (err) {
-      showMessage('Error completing session.', true);
-    }
-  });
+    });
+  }
 
   // Pair, Unpair & Factory Reset Buttons
   if (btnPair) {
@@ -594,7 +603,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  initChart();
-  connectWebSocket();
-  fetchSessions();
+  // Immediate initialization
+  try {
+    initChart();
+  } catch (e) { console.error('Chart init error:', e); }
+
+  try {
+    connectWebSocket();
+  } catch (e) { console.error('WS connect error:', e); }
+
+  try {
+    fetchSessions();
+  } catch (e) { console.error('Fetch sessions error:', e); }
 });

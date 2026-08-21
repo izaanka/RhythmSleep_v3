@@ -27,28 +27,64 @@ if (!fs.existsSync(DATA_DIR)) {
 let store = {
   pairedDevice: null,
   activeSession: null,     // { id, startTime, logs: [] }
-  completedSessions: []    // Array of completed sleep session reports
+  completedSessions: [],   // Array of completed sleep session reports
+  sleepLogs: []
 };
+
+let storeDirty = false;
+function markStoreDirty() {
+  storeDirty = true;
+}
 
 if (fs.existsSync(STORE_FILE)) {
   try {
     const raw = fs.readFileSync(STORE_FILE, 'utf8');
     store = JSON.parse(raw);
     if (!Array.isArray(store.completedSessions)) store.completedSessions = [];
+    if (!Array.isArray(store.sleepLogs)) store.sleepLogs = [];
     if (store.activeSession === undefined) store.activeSession = null;
+    // Trim excessively large historical logs if present
+    if (store.sleepLogs.length > 500) {
+      store.sleepLogs = store.sleepLogs.slice(-500);
+      storeDirty = true;
+    }
     console.log('[SERVER] Loaded store from disk.');
   } catch (err) {
     console.error('[SERVER] Failed to parse store.json, using defaults:', err.message);
   }
 }
 
-function saveStore() {
+function flushStoreAsync() {
+  if (!storeDirty) return;
+  storeDirty = false;
   try {
-    fs.writeFileSync(STORE_FILE, JSON.stringify(store, null, 2), 'utf8');
+    if (store.sleepLogs && store.sleepLogs.length > 500) {
+      store.sleepLogs = store.sleepLogs.slice(-500);
+    }
+    const dataStr = JSON.stringify(store, null, 2);
+    fs.writeFile(STORE_FILE, dataStr, 'utf8', (err) => {
+      if (err) console.error('[STORE FLUSH ERROR]', err.message);
+    });
   } catch (err) {
-    console.error('[SERVER] Error saving store to disk:', err.message);
+    console.error('[STORE ASYNC ERROR]', err.message);
   }
 }
+
+// Background Store Persistence Worker (every 10s)
+setInterval(flushStoreAsync, 10000);
+
+process.on('SIGINT', () => {
+  if (storeDirty) {
+    try { fs.writeFileSync(STORE_FILE, JSON.stringify(store, null, 2), 'utf8'); } catch (e) {}
+  }
+  process.exit(0);
+});
+process.on('SIGTERM', () => {
+  if (storeDirty) {
+    try { fs.writeFileSync(STORE_FILE, JSON.stringify(store, null, 2), 'utf8'); } catch (e) {}
+  }
+  process.exit(0);
+});
 
 function cleanIpAddress(ip) {
   if (!ip) return '---';
@@ -123,7 +159,15 @@ function calculateSessionStats(session) {
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: false,
+  maxAge: 0,
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+}));
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
@@ -137,7 +181,15 @@ function broadcastWs(type, data) {
   });
 }
 
-function sendPairAckReliable(targetIp, token, sendCount = 3) {
+let lastPairAckTimestamp = 0;
+function sendPairAckReliable(targetIp, token, force = false) {
+  const now = Date.now();
+  // Debounce pairing ACKs to prevent ping-pong floods (at most 1 ACK per 8 seconds unless forced)
+  if (!force && (now - lastPairAckTimestamp < 8000)) {
+    return;
+  }
+  lastPairAckTimestamp = now;
+
   const localIp = getLocalIpAddress();
   const ackPayload = JSON.stringify({
     type: 'PAIR_ACK',
@@ -146,31 +198,19 @@ function sendPairAckReliable(targetIp, token, sendCount = 3) {
     token: token
   });
 
-  const sendBurst = () => {
-    try {
-      udpSocket.send(ackPayload, UDP_PORT, '255.255.255.255', () => {});
-      udpSocket.send(ackPayload, UDP_PORT, '192.168.1.255', () => {});
-      if (targetIp && targetIp !== '255.255.255.255' && targetIp !== '127.0.0.1' && targetIp !== '---') {
-        udpSocket.send(ackPayload, UDP_PORT, targetIp, () => {});
-      }
-    } catch (e) {
-      console.error('[UDP SEND ERROR]', e.message);
+  try {
+    udpSocket.send(ackPayload, UDP_PORT, '255.255.255.255', () => {});
+    udpSocket.send(ackPayload, UDP_PORT, '192.168.1.255', () => {});
+    if (targetIp && targetIp !== '255.255.255.255' && targetIp !== '127.0.0.1' && targetIp !== '---') {
+      udpSocket.send(ackPayload, UDP_PORT, targetIp, () => {});
     }
-  };
-
-  for (let i = 0; i < sendCount; i++) {
-    setTimeout(sendBurst, i * 150);
+  } catch (e) {
+    console.error('[UDP SEND ERROR]', e.message);
   }
 
-  // Also send over Serial if available
+  // Also send clean single pair command over serial if connected
   if (serialConnected && serialPortInstance) {
-    for (let i = 0; i < sendCount; i++) {
-      setTimeout(() => {
-        if (serialConnected && serialPortInstance) {
-          serialPortInstance.write(`PAIR:${localIp}:${token}\n`);
-        }
-      }, i * 200);
-    }
+    serialPortInstance.write(`PAIR:${localIp}:${token}\n`);
     console.log(`[SERIAL PAIR SENT] PAIR:${localIp}:${token}`);
   }
 }
@@ -182,6 +222,15 @@ let serialLogs = [];
 let serialPortInstance = null;
 let serialConnected = false;
 let serialPortPath = '/dev/ttyACM0';
+let serialReconnectTimeout = null;
+
+function scheduleSerialReconnect() {
+  if (serialReconnectTimeout) return;
+  serialReconnectTimeout = setTimeout(() => {
+    serialReconnectTimeout = null;
+    initSerialPort();
+  }, 5000);
+}
 
 function initSerialPort() {
   SerialPort.list().then(ports => {
@@ -199,7 +248,7 @@ function initSerialPort() {
         if (err) {
           serialConnected = false;
           broadcastWs('SERIAL_STATUS', { connected: false, port: serialPortPath, error: err.message });
-          setTimeout(initSerialPort, 5000);
+          scheduleSerialReconnect();
           return;
         }
 
@@ -207,7 +256,7 @@ function initSerialPort() {
         console.log(`[SERIAL MONITOR] Opened connection on ${serialPortPath} @ 115200 baud.`);
         broadcastWs('SERIAL_STATUS', { connected: true, port: serialPortPath });
 
-        // If paired device exists, notify ESP32 immediately on serial connection
+        // If paired device exists, notify ESP32 once on serial connection
         if (store.pairedDevice && store.pairedDevice.token) {
           setTimeout(() => {
             if (serialPortInstance && serialConnected) {
@@ -226,9 +275,9 @@ function initSerialPort() {
             if (serialLogs.length > 200) serialLogs.shift();
             broadcastWs('SERIAL_LOG', { log: logEntry });
 
-            // Auto-detect IP & Discovery from ESP32 boot/WiFi logs
-            if (cleanLine.includes('[WIFI SUCCESS] Connected! IP:') || cleanLine.includes('[DISCOVER') || cleanLine.startsWith('DISCOVER:')) {
-              let detectedIp = '192.168.1.8';
+            // Only auto-pair on explicit discovery lines, not on normal WiFi connect echoes
+            if (cleanLine.startsWith('DISCOVER:') || cleanLine.includes('[DISCOVER PROBE]')) {
+              let detectedIp = '192.168.1.7';
               const ipMatch = cleanLine.match(/IP:\s*([0-9\.]+)/);
               if (ipMatch) {
                 detectedIp = ipMatch[1];
@@ -239,16 +288,27 @@ function initSerialPort() {
               if (!store.unpairedByRequest) {
                 const token = store.pairedDevice ? store.pairedDevice.token : `RS-PAIR-${Math.floor(100000 + Math.random() * 900000)}`;
                 store.pairedDevice = {
-                  mac: store.pairedDevice ? store.pairedDevice.mac : '3C:0F:02:E4:72:E0',
+                  mac: store.pairedDevice ? store.pairedDevice.mac : 'E8:F6:0A:8A:66:FC',
                   ip: detectedIp,
                   token: token,
                   pairedAt: store.pairedDevice ? store.pairedDevice.pairedAt : Date.now(),
                   lastSeen: Date.now(),
                   isOnline: true
                 };
-                saveStore();
+                markStoreDirty();
                 broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
-                sendPairAckReliable(detectedIp, token, 3);
+                sendPairAckReliable(detectedIp, token);
+              }
+            }
+
+            // Direct Serial Telemetry Stream ingestion
+            if (cleanLine.startsWith('TELEMETRY:')) {
+              try {
+                const jsonStr = cleanLine.substring(10);
+                const telemetry = JSON.parse(jsonStr);
+                ingestTelemetry(telemetry, 'SERIAL');
+              } catch (e) {
+                console.error('[SERIAL TELEMETRY PARSE ERROR]', e.message);
               }
             } else if (cleanLine.startsWith('HEARTBEAT') || cleanLine.includes('[HEARTBEAT]')) {
               if (store.pairedDevice) {
@@ -266,20 +326,21 @@ function initSerialPort() {
       serialPortInstance.on('close', () => {
         serialConnected = false;
         broadcastWs('SERIAL_STATUS', { connected: false, port: serialPortPath });
-        setTimeout(initSerialPort, 5000);
+        scheduleSerialReconnect();
       });
 
       serialPortInstance.on('error', (err) => {
         serialConnected = false;
         broadcastWs('SERIAL_STATUS', { connected: false, port: serialPortPath, error: err.message });
+        scheduleSerialReconnect();
       });
 
     } catch (e) {
       serialConnected = false;
-      setTimeout(initSerialPort, 5000);
+      scheduleSerialReconnect();
     }
   }).catch(() => {
-    setTimeout(initSerialPort, 5000);
+    scheduleSerialReconnect();
   });
 }
 
@@ -287,6 +348,27 @@ initSerialPort();
 
 wss.on('connection', (ws) => {
   console.log('[WS] Client connected to sleep dashboard.');
+  
+  const latestLog = (store.activeSession && store.activeSession.logs && store.activeSession.logs.length > 0)
+    ? store.activeSession.logs[store.activeSession.logs.length - 1]
+    : (store.sleepLogs && store.sleepLogs.length > 0 ? store.sleepLogs[store.sleepLogs.length - 1] : null);
+
+  const qual = (store.activeSession && store.activeSession.logs && store.activeSession.logs.length > 0)
+    ? evalSessionQualification(store.activeSession.logs)
+    : null;
+
+  const neuralState = latestLog ? {
+    stage: latestLog.stage || 'Awake',
+    stageCode: latestLog.stage_code !== undefined ? latestLog.stage_code : 0,
+    certainty: latestLog.certainty || 90.0,
+    dominantFreq: latestLog.dominant_freq || 8.5,
+    delta: latestLog.delta || 2.5,
+    theta: latestLog.theta || 4.5,
+    alpha: latestLog.alpha || 8.0,
+    beta: latestLog.beta || 3.0,
+    gamma: latestLog.gamma || 1.0
+  } : null;
+
   ws.send(JSON.stringify({
     type: 'INIT_STATE',
     data: {
@@ -295,7 +377,9 @@ wss.on('connection', (ws) => {
       completedSessions: store.completedSessions.slice(-10),
       serverIp: getLocalIpAddress(),
       serialStatus: { connected: serialConnected, port: serialPortPath },
-      serialLogs: serialLogs.slice(-50)
+      serialLogs: serialLogs.slice(-50),
+      latestNeuralState: neuralState,
+      qualification: qual
     }
   }));
 });
@@ -345,7 +429,8 @@ function evalSessionQualification(logs) {
   let sleepEpochs = 0;
 
   logs.forEach(log => {
-    if (log.stage_code === 1 || log.stage_code === 2 || log.stage === 'Light Sleep' || log.stage === 'Deep Sleep' || log.stage === 'REM Sleep') {
+    if (log.stage_code === 1 || log.stage_code === 2 || log.stage_code === 3 || 
+        log.stage === 'Light Sleep' || log.stage === 'Deep Sleep' || log.stage === 'REM Sleep' || log.stage === 'REM') {
       sleepEpochs++;
     }
   });
@@ -369,44 +454,26 @@ app.post('/api/heartbeat', (req, res) => {
   const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   const clientIp = cleanIpAddress(rawIp);
 
-  if (store.unpairedByRequest && !store.pairedDevice) {
-    return res.status(401).json({ status: 'unpaired', error: 'Device explicitly unpaired' });
+  const deviceMac = (mac && mac.length > 5) ? mac.toUpperCase() : (store.pairedDevice ? store.pairedDevice.mac : 'E8:F6:0A:8A:66:FC');
+  const activeToken = token || (store.pairedDevice ? store.pairedDevice.token : 'RS-PAIR-ACTIVE');
+
+  const wasOffline = !store.pairedDevice || !store.pairedDevice.isOnline;
+  
+  store.pairedDevice = {
+    mac: deviceMac,
+    ip: (clientIp !== '127.0.0.1' && clientIp !== '---') ? clientIp : (store.pairedDevice ? store.pairedDevice.ip : '192.168.1.7'),
+    token: activeToken,
+    pairedAt: (store.pairedDevice && store.pairedDevice.mac === deviceMac) ? store.pairedDevice.pairedAt : Date.now(),
+    lastSeen: Date.now(),
+    isOnline: true
+  };
+  markStoreDirty();
+
+  if (wasOffline) {
+    console.log(`[DEVICE ONLINE] ESP32 ${deviceMac} is ONLINE via heartbeat.`);
+    broadcastWs('DEVICE_STATUS', { online: true, pairedDevice: store.pairedDevice });
   }
-
-  if (!store.pairedDevice) {
-    const assignedToken = token || `RS-PAIR-${Math.floor(100000 + Math.random() * 900000)}`;
-    store.pairedDevice = {
-      mac: mac || 'ESP32_DEV',
-      ip: (clientIp !== '127.0.0.1' && clientIp !== '---') ? clientIp : '192.168.1.8',
-      token: assignedToken,
-      pairedAt: Date.now(),
-      lastSeen: Date.now(),
-      isOnline: true
-    };
-    saveStore();
-    broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
-    console.log(`[HEARTBEAT AUTO-PAIR] ESP32 ${store.pairedDevice.mac} auto-paired via heartbeat handshake!`);
-  } else {
-    // If token or MAC mismatch
-    if (token && store.pairedDevice.token && store.pairedDevice.token !== token && mac && store.pairedDevice.mac && store.pairedDevice.mac !== mac) {
-      console.log(`[HEARTBEAT REJECTED] Mismatched device token/mac: received ${mac}/${token}`);
-      return res.status(401).json({ status: 'unpaired', error: 'Token/MAC mismatch' });
-    }
-
-    const wasOffline = !store.pairedDevice.isOnline;
-    store.pairedDevice.lastSeen = Date.now();
-    if (clientIp !== '127.0.0.1' && clientIp !== '---') {
-      store.pairedDevice.ip = clientIp;
-    }
-    if (mac) store.pairedDevice.mac = mac;
-    store.pairedDevice.isOnline = true;
-
-    if (wasOffline) {
-      console.log(`[DEVICE ONLINE] ESP32 ${store.pairedDevice.mac} is back ONLINE.`);
-      broadcastWs('DEVICE_STATUS', { online: true, pairedDevice: store.pairedDevice });
-      broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
-    }
-  }
+  broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
 
   res.json({
     status: 'ok',
@@ -421,30 +488,30 @@ app.post('/api/heartbeat', (req, res) => {
 // REST API: Direct HTTP Pairing Fallback Endpoint
 app.post('/api/pair', (req, res) => {
   store.unpairedByRequest = false;
-  const { mac } = req.body || {};
+  const { mac, token } = req.body || {};
   const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   const clientIp = cleanIpAddress(rawIp);
-  const deviceMac = mac || (store.pairedDevice ? store.pairedDevice.mac : '3C:0F:02:E4:72:E0');
-
-  let token = store.pairedDevice ? store.pairedDevice.token : `RS-PAIR-${Math.floor(100000 + Math.random() * 900000)}`;
+  const deviceMac = (mac && mac.length > 5) ? mac.toUpperCase() : (store.pairedDevice ? store.pairedDevice.mac : 'E8:F6:0A:8A:66:FC');
+  const activeToken = token || (store.pairedDevice ? store.pairedDevice.token : 'RS-PAIR-ACTIVE');
 
   store.pairedDevice = {
     mac: deviceMac,
-    ip: (clientIp !== '127.0.0.1' && clientIp !== '---') ? clientIp : '192.168.1.8',
-    token: token,
+    ip: (clientIp !== '127.0.0.1' && clientIp !== '---') ? clientIp : '192.168.1.7',
+    token: activeToken,
     pairedAt: Date.now(),
     lastSeen: Date.now(),
     isOnline: true
   };
-  saveStore();
+  markStoreDirty();
   broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
-  console.log(`[HTTP PAIR SUCCESS] Device ${deviceMac} paired with token ${token}`);
+  broadcastWs('DEVICE_STATUS', { online: true, pairedDevice: store.pairedDevice });
+  console.log(`[HTTP PAIR SUCCESS] Device ${deviceMac} paired with token ${activeToken}`);
 
-  sendPairAckReliable(store.pairedDevice.ip, token, 3);
+  sendPairAckReliable(store.pairedDevice.ip, activeToken);
 
   res.json({
     status: 'ok',
-    token: token,
+    token: activeToken,
     server_ip: getLocalIpAddress(),
     server_port: HTTP_PORT,
     pairedDevice: store.pairedDevice
@@ -459,9 +526,9 @@ app.post('/api/manual-pair', async (req, res) => {
   const targetIp = cleanIpAddress(ip.trim());
   store.unpairedByRequest = false;
 
-  const token = store.pairedDevice ? store.pairedDevice.token : `RS-PAIR-${Math.floor(100000 + Math.random() * 900000)}`;
+  const token = store.pairedDevice ? store.pairedDevice.token : 'RS-PAIR-ACTIVE';
+  let espMac = store.pairedDevice ? store.pairedDevice.mac : 'E8:F6:0A:8A:66:FC';
 
-  let espMac = store.pairedDevice ? store.pairedDevice.mac : '3C:0F:02:E4:72:E0';
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);
@@ -474,7 +541,7 @@ app.post('/api/manual-pair', async (req, res) => {
     clearTimeout(timeoutId);
     if (espRes.ok) {
       const espData = await espRes.json();
-      if (espData.mac) espMac = espData.mac;
+      if (espData.mac) espMac = espData.mac.toUpperCase();
       console.log(`[HTTP MANUAL PAIR] ESP32 confirmed pairing at ${targetIp} (MAC: ${espMac})`);
     }
   } catch (err) {
@@ -489,10 +556,11 @@ app.post('/api/manual-pair', async (req, res) => {
     lastSeen: Date.now(),
     isOnline: true
   };
-  saveStore();
+  markStoreDirty();
   broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
+  broadcastWs('DEVICE_STATUS', { online: true, pairedDevice: store.pairedDevice });
 
-  sendPairAckReliable(targetIp, token, 3);
+  sendPairAckReliable(targetIp, token, true);
 
   res.json({
     status: 'ok',
@@ -501,38 +569,28 @@ app.post('/api/manual-pair', async (req, res) => {
   });
 });
 
-// REST API: ESP32 Sleep Telemetry & Session Completion Endpoint
-app.post('/api/sleep-data', (req, res) => {
-  const telemetry = req.body;
-  
-  if (!telemetry || !telemetry.mac || !telemetry.token) {
-    return res.status(400).json({ status: 'error', error: 'Missing required parameters' });
+// Shared Unified Telemetry Ingestion (handles HTTP and Serial streams)
+function ingestTelemetry(telemetry, source = 'HTTP', res = null) {
+  if (!telemetry) {
+    if (res) return res.status(400).json({ status: 'error', error: 'Missing telemetry payload' });
+    return;
   }
 
-  const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const rawIp = (res && res.req) ? (res.req.headers['x-forwarded-for'] || res.req.socket.remoteAddress) : null;
   const clientIp = cleanIpAddress(rawIp);
+  const deviceMac = (telemetry.mac && telemetry.mac.length > 5) ? telemetry.mac.toUpperCase() : (store.pairedDevice ? store.pairedDevice.mac : 'E8:F6:0A:8A:66:FC');
+  const activeToken = telemetry.token || (store.pairedDevice ? store.pairedDevice.token : 'RS-PAIR-ACTIVE');
 
-  if (store.unpairedByRequest && !store.pairedDevice) {
-    return res.status(401).json({ status: 'unpaired', error: 'Device explicitly unpaired' });
-  }
+  const wasOffline = !store.pairedDevice || !store.pairedDevice.isOnline;
 
-  if (!store.pairedDevice) {
-    store.pairedDevice = {
-      mac: telemetry.mac,
-      ip: clientIp,
-      token: telemetry.token,
-      pairedAt: Date.now(),
-      lastSeen: Date.now()
-    };
-    saveStore();
-    broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
-    console.log(`[TELEMETRY AUTO-PAIR] ESP32 ${telemetry.mac} auto-paired on telemetry request!`);
-  } else if (store.pairedDevice.token !== telemetry.token && store.pairedDevice.mac !== telemetry.mac) {
-    return res.status(401).json({ status: 'unpaired', error: 'Device not paired' });
-  }
-
-  store.pairedDevice.lastSeen = Date.now();
-  store.pairedDevice.ip = clientIp;
+  store.pairedDevice = {
+    mac: deviceMac,
+    ip: (clientIp !== '127.0.0.1' && clientIp !== '---') ? clientIp : (store.pairedDevice ? store.pairedDevice.ip : '192.168.1.7'),
+    token: activeToken,
+    pairedAt: (store.pairedDevice && store.pairedDevice.mac === deviceMac) ? store.pairedDevice.pairedAt : Date.now(),
+    lastSeen: Date.now(),
+    isOnline: true
+  };
 
   const isSessionComplete = !!telemetry.session_completed;
 
@@ -556,21 +614,22 @@ app.post('/api/sleep-data', (req, res) => {
 
   const epoch = {
     id: Date.now(),
-    mac: telemetry.mac,
+    mac: deviceMac,
     dominant_freq: Math.abs(parseFloat(telemetry.dominant_freq || 0)),
     delta: Math.abs(parseFloat(telemetry.delta || 0)),
     theta: Math.abs(parseFloat(telemetry.theta || 0)),
     alpha: Math.abs(parseFloat(telemetry.alpha || 0)),
     beta: Math.abs(parseFloat(telemetry.beta || 0)),
     gamma: Math.abs(parseFloat(telemetry.gamma || 0)),
-    stage: telemetry.stage || 'Unknown',
-    stage_code: parseInt(telemetry.stage_code || 0),
+    stage: telemetry.stage || 'Awake',
+    stage_code: parseInt(telemetry.stage_code !== undefined ? telemetry.stage_code : 0),
     certainty: certaintyVal,
     alarm_ringing: !!telemetry.alarm_ringing,
     timestamp: telemetry.timestamp || Math.floor(Date.now() / 1000)
   };
 
   store.activeSession.logs.push(epoch);
+  markStoreDirty();
 
   if (isSessionComplete) {
     const qual = evalSessionQualification(store.activeSession.logs);
@@ -579,9 +638,10 @@ app.post('/api/sleep-data', (req, res) => {
       console.log(`[SESSION DISCARDED] Qualification Failed: Sleep Ratio ${qual.sleepRatioPct}% (≥90% required) & Actual Sleep ${qual.actualSleepMin}m (≥60m required). Discarding.`);
       const msgStr = `Session Discarded: Only ${qual.sleepRatioPct}% sleep waves detected (≥90% required) & ${qual.actualSleepMin}m actual sleep (≥60m required).`;
       store.activeSession = null;
-      saveStore();
+      markStoreDirty();
       broadcastWs('SESSION_DISCARDED', { message: msgStr, qualification: qual });
-      return res.json({ status: 'ignored', message: msgStr, qualification: qual });
+      if (res) return res.json({ status: 'ignored', message: msgStr, qualification: qual });
+      return;
     }
 
     console.log(`[SLEEP SESSION COMPLETE] Session ${store.activeSession.id} (${qual.actualSleepMin}m actual sleep, ${qual.sleepRatioPct}% sleep waves) completed! Generating report...`);
@@ -599,13 +659,20 @@ app.post('/api/sleep-data', (req, res) => {
     }
 
     store.activeSession = null;
-    saveStore();
+    markStoreDirty();
 
     broadcastWs('SESSION_COMPLETED', { completedSession });
-    return res.json({ status: 'ok', sessionState: 'COMPLETED', server_time: Math.floor(Date.now() / 1000), report: completedSession });
+    if (res) return res.json({ status: 'ok', sessionState: 'COMPLETED', server_time: Math.floor(Date.now() / 1000), report: completedSession });
+    return;
   } else {
     const qual = evalSessionQualification(store.activeSession.logs);
-    saveStore();
+    
+    if (wasOffline) {
+      console.log(`[DEVICE ONLINE] ESP32 ${deviceMac} is ONLINE via ${source}.`);
+      broadcastWs('DEVICE_STATUS', { online: true, pairedDevice: store.pairedDevice });
+      broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
+    }
+
     broadcastWs('TELEMETRY_UPDATE', {
       neuralState: {
         stage: epoch.stage,
@@ -627,8 +694,13 @@ app.post('/api/sleep-data', (req, res) => {
       }
     });
 
-    return res.json({ status: 'ok', sessionState: 'IN_PROGRESS', server_time: Math.floor(Date.now() / 1000) });
+    if (res) return res.json({ status: 'ok', sessionState: 'IN_PROGRESS', server_time: Math.floor(Date.now() / 1000) });
   }
+}
+
+// REST API: ESP32 Sleep Telemetry & Session Completion Endpoint
+app.post('/api/sleep-data', (req, res) => {
+  ingestTelemetry(req.body, 'HTTP', res);
 });
 
 // Manual Start Session Endpoint
@@ -642,7 +714,7 @@ app.post('/api/start-session', (req, res) => {
     startTime: Date.now(),
     logs: []
   };
-  saveStore();
+  markStoreDirty();
 
   broadcastWs('SESSION_STARTED', { activeSession: store.activeSession });
   res.json({ status: 'ok', activeSession: store.activeSession });
@@ -659,7 +731,7 @@ app.post('/api/complete-session', (req, res) => {
   if (!req.body.force && !qual.isQualified) {
     const msgStr = `Session Discarded: Only ${qual.sleepRatioPct}% sleep waves detected (≥90% required) & ${qual.actualSleepMin}m actual sleep (≥60m required).`;
     store.activeSession = null;
-    saveStore();
+    markStoreDirty();
     broadcastWs('SESSION_DISCARDED', { message: msgStr, qualification: qual });
     return res.json({ status: 'ignored', message: msgStr, qualification: qual });
   }
@@ -674,7 +746,7 @@ app.post('/api/complete-session', (req, res) => {
 
   store.completedSessions.push(completedSession);
   store.activeSession = null;
-  saveStore();
+  markStoreDirty();
 
   broadcastWs('SESSION_COMPLETED', { completedSession });
   res.json({ status: 'ok', completedSession });
@@ -684,7 +756,7 @@ app.post('/api/complete-session', (req, res) => {
 app.post('/api/unpair', (req, res) => {
   store.pairedDevice = null;
   store.unpairedByRequest = true;
-  saveStore();
+  markStoreDirty();
   broadcastWs('PAIRING_UPDATE', { pairedDevice: null });
 
   if (serialConnected && serialPortInstance) {
@@ -699,7 +771,8 @@ app.post('/api/factory-reset', (req, res) => {
   store.pairedDevice = null;
   store.activeSession = null;
   store.completedSessions = [];
-  saveStore();
+  store.sleepLogs = [];
+  markStoreDirty();
   broadcastWs('FACTORY_RESET', { message: 'Server reset complete.' });
   res.json({ status: 'ok', message: 'Server reset complete.' });
 });
@@ -743,10 +816,10 @@ udpSocket.on('message', (msg, rinfo) => {
         lastSeen: Date.now(),
         isOnline: true
       };
-      saveStore();
+      markStoreDirty();
 
       console.log(`[UDP DISCOVER RECEIVED] From ${rinfo.address}:${rinfo.port} (MAC: ${deviceMac})`);
-      sendPairAckReliable(cleanIpAddress(rinfo.address), token, 3);
+      sendPairAckReliable(cleanIpAddress(rinfo.address), token);
 
       broadcastWs('PAIRING_UPDATE', { pairedDevice: store.pairedDevice });
       broadcastWs('DEVICE_STATUS', { online: true, pairedDevice: store.pairedDevice });

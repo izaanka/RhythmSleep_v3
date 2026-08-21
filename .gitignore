@@ -6,4 +6,5 @@ server/data/store.json
 # Build & OS artifacts
 *.bin
 *.elf
+*.log
 .DS_Store
