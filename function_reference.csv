@@ -1,0 +1,141 @@
+Component,File,Function / Class.Method,Purpose
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,setup(),Boots all hardware — displays / RTC clock / SD card / BLE / Wi-Fi — and loads neural network weights from flash
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,loop(),Main tick. Reads buttons / samples EEG / runs inference / sends telemetry / checks alarms / refreshes screens
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,updateFFT(),Samples the analog EEG pin at 256 Hz / detects motion artifacts / runs a 512-point FFT / triggers neural network inference when the buffer is full
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,applyHannWindow(),Multiplies time-domain samples by the Hann window function to reduce spectral leakage before FFT
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,computeFFT(),In-place Radix-2 Cooley-Tukey Fast Fourier Transform on real and imaginary sample buffers
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,findDominantFrequency(),Scans FFT output bins within a frequency range to determine the peak dominant frequency
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,applyBandpassFilter(),Filters raw analog EEG samples using a second-order digital IIR bandpass filter (0.5 Hz to 45 Hz)
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,applyTemporalMajorityFilter(),30-second sliding-window majority voting across recent sleep classifications to eliminate transient fluctuations
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,runNeuralNetworkInference(),Extracts 16 features from FFT output and runs the forward pass through the MLP to classify the epoch as Wake / Light / Deep / REM
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,relu(),Applies the ReLU activation function in-place on an array of floats
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,softmax(),Applies numerically stable softmax activation in-place across an output probability array
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,matmulRAM(),Performs fully connected dense layer matrix multiplication with weights and biases from RAM
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,loadNNWeights(),Loads trained neural network weights from NVS storage or falls back to factory default PROGMEM weights
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,saveNNWeights(),Saves updated neural network weights from RAM into NVS flash and increments the trained session counter
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,trainNNOnDevice(),Runs a single backpropagation pass with L2 regularization to adjust MLP weights in RAM using recorded feature history
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,runOnDeviceLearningPass(),Iterates through feature history ring buffers to execute multi-pass on-device backpropagation training and saves weights to NVS
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,handlePairingAndTelemetry(),Manages UDP discovery broadcasts / HTTP pairing fallback / periodic heartbeats / telemetry streaming over serial and Wi-Fi
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,handleSerialCommands(),Parses and executes incoming USB serial commands (WiFi config / manual pair / status / unpair / factory reset)
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,initWiFiProvisioning(),Connects to saved WiFi credentials in station mode / falls back to SoftAP captive portal on failure
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,startSoftAP(),Starts the ESP32 soft access point (RhythmSleep-Setup) and initializes captive portal DNS and web server
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,stopSoftAP(),Shuts down the DNS server and SoftAP / switches WiFi back to station mode
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,setupWebServerRoutes(),Registers HTTP routes for captive portal redirection / WiFi configuration forms / pairing endpoints / device status
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,fetchServerTime(),Pulls UTC time from the server /api/time endpoint and adds the +5:30 IST offset before setting the hardware RTC
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,setSystemUnixTime(),Adjusts local epoch time offset for GMT+5:30 and synchronizes the hardware PCF8563 RTC
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,getCurrentTime(),Retrieves the current timestamp from hardware RTC / local epoch offset / NTP / or uptime fallback
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,updateSmartAlarm(),Watches a 2-minute rolling sleep stage buffer and fires the haptic motor on natural light-sleep transition inside the wake window
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,isButtonPressed(),Debounces digital readings for a tactile button and returns true on a valid HIGH-to-LOW transition
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,handleButtonActions(),Dispatches button presses for menu cycling / value adjustment / sleep tracking toggle / manual recalibration / alarm dismissal
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,performFactoryReset(),Clears stored WiFi and pairing config from NVS / displays reset notification / restarts into AP mode
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,enterDeepSleep(),Configures RTC GPIO pull-ups / powers down displays and peripherals / enters ESP32 deep sleep with button wake-up
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,wakeUpDisplay(),Wakes the TFT backlight and OLED from power-saving timeout and refreshes the activity timer
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,getEEGBand(),Returns the descriptive band name (Delta / Theta / Alpha / Beta / Gamma) for a given frequency
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,initBLE(),Initializes the BLE server as RhythmSleep_AI / configures services and advertising parameters
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,initAudioSpeaker(),Configures GPIO output pins and attaches the LEDC timer for tone generation on the speaker
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,playTone(),Plays an audio tone of a specified frequency using the LEDC timer or stops tone when frequency is 0
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,deselectSPI(),Deselects both the SD card and TFT display by driving their CS pins HIGH
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,scanSDFiles(),Scans the SD card root directory for supported audio and text files
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,checkSDCardDetection(),Powers up the SD card module / verifies SPI / mounts the filesystem / triggers initial file scan
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderMenuTime(),Renders current time / date / day of week on the SSD1306 OLED
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderMenuEEG(),Displays real-time EEG frequency / sleep stage / confidence / tracking status on OLED
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderMenuNNStats(),Displays neural network learning metrics and NVS state on OLED
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderMenuAlarm(),Displays smart alarm window configuration on OLED
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderMenuWiFiReset(),Displays WiFi status / IP / pairing / factory reset prompt on OLED
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderMenuDeepSleep(),Displays deep sleep information and entry prompt on OLED
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderOLEDAlarmRinging(),Renders wake-up alert screen on OLED when alarm fires
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderTFTTime(),Renders large digital clock and date on ST7789 TFT display
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderTFTEEG(),Renders real-time EEG frequency / stage / certainty on TFT
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderTFTNNStats(),Displays neural network learning metrics and architecture on TFT
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderTFTAlarm(),Displays and allows editing of smart alarm window on TFT
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderTFTAlarmRinging(),Renders alternating flashing alarm alert screen on TFT
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderTFTWiFiReset(),Displays WiFi details and factory reset button on TFT
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,renderTFTDeepSleep(),Displays power saver status and deep sleep confirmation on TFT
+ESP32-S3 Firmware,esp32s3_rhythmSleep_arduinoide.ino,drawTFTTouchButtons(),Renders the bottom button guide UI (MENU / UP / DN / SELECT) on TFT
+Arduino UNO Q Server,server/server.js,markStoreDirty(),Sets a dirty flag so the background worker knows in-memory changes need writing to disk
+Arduino UNO Q Server,server/server.js,flushStoreAsync(),Background worker (10s interval) that trims sleepLogs to 500 entries and writes store.json to disk asynchronously
+Arduino UNO Q Server,server/server.js,cleanIpAddress(),Strips IPv6-mapped prefixes (::ffff:) and converts loopbacks to standard IPv4
+Arduino UNO Q Server,server/server.js,getLocalIpAddress(),Discovers and returns the host machine non-internal IPv4 address from network interfaces
+Arduino UNO Q Server,server/server.js,calculateSessionStats(),Computes total duration / stage percentage breakdowns / composite sleep quality score (0-100) from session logs
+Arduino UNO Q Server,server/server.js,broadcastWs(),Serializes and broadcasts a timestamped JSON payload to all connected WebSocket dashboard clients
+Arduino UNO Q Server,server/server.js,sendPairAckReliable(),Debounced pairing ACK over UDP broadcast + unicast + serial. Capped at one ACK per 8 seconds to prevent feedback loops
+Arduino UNO Q Server,server/server.js,initSerialPort(),Auto-detects ESP32 USB serial ports / opens 115200-baud connection / attaches readline parser and lifecycle handlers
+Arduino UNO Q Server,server/server.js,scheduleSerialReconnect(),Queues a 5-second delayed call to initSerialPort after disconnection or error
+Arduino UNO Q Server,server/server.js,parser.on('data'),Parses incoming serial lines — routes DISCOVER: to pairing / TELEMETRY:{} to ingestTelemetry / HEARTBEAT to liveness / everything else to dashboard log
+Arduino UNO Q Server,server/server.js,wss.on('connection'),Sends full INIT_STATE payload (pairing / sessions / neural state / serial status) to newly connected dashboard clients
+Arduino UNO Q Server,server/server.js,ingestTelemetry(),Central telemetry router. Timestamps epochs / manages active session state / triggers qualification on completion / broadcasts live updates via WebSocket
+Arduino UNO Q Server,server/server.js,evalSessionQualification(),Quality gate — requires 90%+ sleep epochs and 60+ minutes duration. Failing sessions are discarded
+Arduino UNO Q Server,server/server.js,GET /api/time,Returns server Unix timestamp in seconds for ESP32 clock synchronization
+Arduino UNO Q Server,server/server.js,GET /api/serial-logs,Returns serial connection status / port path / recent log line buffer
+Arduino UNO Q Server,server/server.js,POST /api/serial-command,Writes a user command over serial to the ESP32 for remote debugging
+Arduino UNO Q Server,server/server.js,GET /api/sleep-sessions,Returns active in-progress session and completed historical sessions
+Arduino UNO Q Server,server/server.js,POST /api/heartbeat,ESP32 keepalive endpoint. Updates lastSeen timestamp / returns paired token and server time
+Arduino UNO Q Server,server/server.js,POST /api/pair,HTTP fallback pairing endpoint when UDP discovery fails
+Arduino UNO Q Server,server/server.js,POST /api/manual-pair,Dashboard-initiated pairing with a user-specified ESP32 IP address
+Arduino UNO Q Server,server/server.js,POST /api/sleep-data,Receives telemetry JSON from ESP32 over Wi-Fi and forwards to ingestTelemetry
+Arduino UNO Q Server,server/server.js,POST /api/start-session,Manually starts a new active sleep session from the dashboard
+Arduino UNO Q Server,server/server.js,POST /api/complete-session,Manually ends the active session / runs qualification / computes stats / archives
+Arduino UNO Q Server,server/server.js,POST /api/unpair,Clears paired device record and sends UNPAIR command over serial
+Arduino UNO Q Server,server/server.js,POST /api/factory-reset,Wipes all stored data back to empty defaults
+Arduino UNO Q Server,server/server.js,udpSocket.on('message'),Listens on UDP 8888 for DISCOVER: broadcasts from ESP32 / auto-pairs and sends reliable ACK
+Arduino UNO Q Server,server/server.js,Liveness Monitor (setInterval 5s),Marks paired device offline if no communication received in 25 seconds
+Arduino UNO Q Dashboard,server/public/app.js,initChart(),Creates Chart.js stepped-line hypnogram with four Y-axis levels (Awake / Light / Deep / REM)
+Arduino UNO Q Dashboard,server/public/app.js,connectWebSocket(),Opens WebSocket to server / handles INIT_STATE / TELEMETRY_UPDATE / SERIAL_LOG / SESSION events / auto-reconnects on disconnect
+Arduino UNO Q Dashboard,server/public/app.js,updateNeuralStateUI(),Updates live dominant frequency / EEG band label / sleep stage badge / confidence / five spectral power bars
+Arduino UNO Q Dashboard,server/public/app.js,updateBar(),Sets a frequency band progress bar width and numeric label
+Arduino UNO Q Dashboard,server/public/app.js,renderCompletedSessionReport(),Populates report card (score / duration / deep% / REM%) and redraws hypnogram for a selected historical session
+Arduino UNO Q Dashboard,server/public/app.js,updateSessionStatusUI(),Toggles sleeping/awake banner / enables-disables session buttons / populates session history dropdown
+Arduino UNO Q Dashboard,server/public/app.js,updatePairingUI(),Shows paired device card with MAC / IP / token / online-offline badge / last-seen time
+Arduino UNO Q Dashboard,server/public/app.js,updateSerialStatusUI(),Updates serial terminal header badge (Connected/Disconnected) and active port path
+Arduino UNO Q Dashboard,server/public/app.js,appendSerialLog(),Appends a line to the terminal output / caps buffer at 300 lines / applies search filtering / handles autoscroll
+Arduino UNO Q Dashboard,server/public/app.js,showMessage(),Displays a temporary toast notification that auto-dismisses after 4 seconds
+Arduino UNO Q Dashboard,server/public/app.js,sendSerialCommand(),Reads the command input field and POSTs it to /api/serial-command
+Arduino UNO Q Dashboard,server/public/app.js,fetchSessions(),Fetches session data from /api/sleep-sessions and updates the UI
+Python Weight Optimizer,sleep_neural_optimizer.py,NeuralNetworkArchitectureConfig.__init__(),Initializes all hyperparameters — layer sizes (16>32>16>4) / learning rate / momentum / weight decay / epochs / batch size / scheduler config. Calculates total parameter count (1140)
+Python Weight Optimizer,sleep_neural_optimizer.py,NeuralNetworkArchitectureConfig.to_dict(),Serializes the architecture configuration into a dictionary for JSON export metadata
+Python Weight Optimizer,sleep_neural_optimizer.py,ActivationFunctions.relu(),Computes ReLU activation element-wise on input arrays
+Python Weight Optimizer,sleep_neural_optimizer.py,ActivationFunctions.relu_derivative(),Computes the analytical gradient of ReLU (1 where positive / 0 elsewhere)
+Python Weight Optimizer,sleep_neural_optimizer.py,ActivationFunctions.leaky_relu(),Computes Leaky ReLU with configurable negative slope alpha
+Python Weight Optimizer,sleep_neural_optimizer.py,ActivationFunctions.elu(),Computes Exponential Linear Unit activation on clipped inputs
+Python Weight Optimizer,sleep_neural_optimizer.py,ActivationFunctions.gelu(),Computes Gaussian Error Linear Unit using the tanh approximation
+Python Weight Optimizer,sleep_neural_optimizer.py,ActivationFunctions.sigmoid(),Standard logistic sigmoid with input clipping to prevent overflow
+Python Weight Optimizer,sleep_neural_optimizer.py,ActivationFunctions.softmax(),Numerically stable softmax probabilities across 1D or 2D arrays along the last dimension
+Python Weight Optimizer,sleep_neural_optimizer.py,LossFunctions.cross_entropy(),Categorical cross-entropy loss with optional label smoothing (epsilon=0.05) to prevent overconfident predictions
+Python Weight Optimizer,sleep_neural_optimizer.py,LossFunctions.focal_loss(),Focal loss with focusing parameter gamma for hard-sample emphasis and optional class weighting
+Python Weight Optimizer,sleep_neural_optimizer.py,SGDOptimizer.__init__(),Initializes SGD with learning rate / momentum / Nesterov flag / weight decay / velocity buffers
+Python Weight Optimizer,sleep_neural_optimizer.py,SGDOptimizer.update(),Updates weights and biases using momentum or Nesterov accelerated gradients with L2 decay
+Python Weight Optimizer,sleep_neural_optimizer.py,AdamOptimizer.__init__(),Initializes Adam hyperparameters (lr / beta1 / beta2 / epsilon / weight decay) and moment tracking dictionaries
+Python Weight Optimizer,sleep_neural_optimizer.py,AdamOptimizer.step(),Increments the internal timestep counter used for moment bias correction
+Python Weight Optimizer,sleep_neural_optimizer.py,AdamOptimizer.update(),Updates weights using bias-corrected first and second moment moving averages with weight decay
+Python Weight Optimizer,sleep_neural_optimizer.py,CosineAnnealingLRScheduler.__init__(),Initializes scheduler with optimizer reference / max steps / minimum learning rate / initial LR
+Python Weight Optimizer,sleep_neural_optimizer.py,CosineAnnealingLRScheduler.step(),Advances the schedule and decays LR following a cosine curve from initial LR down to eta_min
+Python Weight Optimizer,sleep_neural_optimizer.py,DenseLayer.__init__(),Initializes weights with Xavier uniform distribution / zero biases / allocates input and gradient caches
+Python Weight Optimizer,sleep_neural_optimizer.py,DenseLayer.forward(),Computes linear transformation (Wx + b) while caching input and pre-activations for backward pass
+Python Weight Optimizer,sleep_neural_optimizer.py,DenseLayer.backward(),Calculates parameter gradients for weights / biases / and upstream inputs using incoming output gradients
+Python Weight Optimizer,sleep_neural_optimizer.py,RhythmSleepMultiLayerPerceptron.__init__(),Instantiates three dense layers / Adam or SGD optimizer / optional cosine annealing scheduler per config
+Python Weight Optimizer,sleep_neural_optimizer.py,RhythmSleepMultiLayerPerceptron.forward(),Full forward pass through all three layers with ReLU activations and final softmax probabilities
+Python Weight Optimizer,sleep_neural_optimizer.py,RhythmSleepMultiLayerPerceptron.forward_intermediates(),Forward pass returning all intermediate pre-activation and post-activation arrays for debugging
+Python Weight Optimizer,sleep_neural_optimizer.py,RhythmSleepMultiLayerPerceptron.backward(),Backpropagation across all three layers computing parameter gradients from output prediction errors
+Python Weight Optimizer,sleep_neural_optimizer.py,RhythmSleepMultiLayerPerceptron.optimize_step(),Updates weights and biases across all three layers using the configured optimizer
+Python Weight Optimizer,sleep_neural_optimizer.py,RhythmSleepMultiLayerPerceptron.scheduler_step(),Advances the learning rate scheduler by one step
+Python Weight Optimizer,sleep_neural_optimizer.py,RhythmSleepMultiLayerPerceptron.get_flattened_weights(),Flattens and concatenates all layer weights and biases into a single 1140-element 1D array (W1>b1>W2>b2>W3>b3)
+Python Weight Optimizer,sleep_neural_optimizer.py,RhythmSleepMultiLayerPerceptron.set_flattened_weights(),Unpacks a 1140-element vector and assigns parameters back to the respective dense layers
+Python Weight Optimizer,sleep_neural_optimizer.py,FeatureExtractor.clamp01(),Clamps a float value into [0.0 / 1.0]
+Python Weight Optimizer,sleep_neural_optimizer.py,FeatureExtractor.extract_features_from_bands(),Replicates the exact 16-feature computation from ESP32 firmware — relative band powers / ratios / dominant freq / entropy / energy / vigilance indices
+Python Weight Optimizer,sleep_neural_optimizer.py,SleepDataLoader.__init__(),Initializes the loader with the file path to the sleep data store JSON
+Python Weight Optimizer,sleep_neural_optimizer.py,SleepDataLoader.load_records_from_store(),Parses all epochs from sleepLogs / activeSession / completedSessions into feature matrices and label vectors with stage distribution stats
+Python Weight Optimizer,sleep_neural_optimizer.py,SyntheticEEGGenerator.generate_physiologic_distribution(),Generates clinically realistic synthetic EEG band power samples per sleep stage to balance the heavily skewed dataset (16155 Wake vs 63 REM)
+Python Weight Optimizer,sleep_neural_optimizer.py,DataAugmentationEngine.jitter(),Adds Gaussian noise (sigma=0.015) to feature vectors simulating electrode impedance variation
+Python Weight Optimizer,sleep_neural_optimizer.py,DataAugmentationEngine.scaling(),Applies random per-sample multiplicative scaling (sigma=0.03) simulating headband placement differences
+Python Weight Optimizer,sleep_neural_optimizer.py,DataAugmentationEngine.mixup_batch(),Interpolates random sample pairs and labels using Beta-distributed mixing to learn smooth decision boundaries between sleep stages
+Python Weight Optimizer,sleep_neural_optimizer.py,ModelEvaluator.compute_confusion_matrix(),Builds a 4x4 confusion matrix from predicted vs true stage labels
+Python Weight Optimizer,sleep_neural_optimizer.py,ModelEvaluator.compute_classification_metrics(),Calculates per-class precision / recall / F1 / macro F1 / weighted F1 / Cohen Kappa from the confusion matrix
+Python Weight Optimizer,sleep_neural_optimizer.py,ModelEvaluator.render_ascii_confusion_matrix(),Renders the confusion matrix with row and column totals into a formatted ASCII table string
+Python Weight Optimizer,sleep_neural_optimizer.py,WeightExporter.format_as_cpp_progmem(),Formats 1140 float32 weights into a C++ PROGMEM array literal ready for copy-paste into ESP32 firmware
+Python Weight Optimizer,sleep_neural_optimizer.py,WeightExporter.save_cpp_header(),Writes a complete .h header file with include guards / accuracy comments / PROGMEM array to optimized_weights.h
+Python Weight Optimizer,sleep_neural_optimizer.py,WeightExporter.save_json_weights(),Writes structured JSON with metadata / per-layer weights with shapes / flat parameter vector to optimized_weights.json
+Python Weight Optimizer,sleep_neural_optimizer.py,TrainingPipeline.__init__(),Initializes pipeline with architecture config / store path / model instance / stage class names
+Python Weight Optimizer,sleep_neural_optimizer.py,TrainingPipeline.prepare_dataset(),Loads raw data / generates 400 synthetic samples per stage / applies jitter+scaling+mixup augmentation / splits 80/20 train/val
+Python Weight Optimizer,sleep_neural_optimizer.py,TrainingPipeline.one_hot(),Converts integer class index arrays into one-hot encoded probability vectors
+Python Weight Optimizer,sleep_neural_optimizer.py,TrainingPipeline.train(),Main training loop — mini-batch forward/backward with optional Mixup / validation evaluation / early stopping / best checkpoint recovery. Achieved 99.65% accuracy and 98.06% macro F1
+Python Weight Optimizer,sleep_neural_optimizer.py,main(),Configures hyperparameters / runs the full training pipeline / exports optimized weights to .h and .json files

@@ -143,9 +143,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (completedSessionsStore.length > 0) {
       completedSessionsStore.forEach((s, idx) => {
         const opt = document.createElement('option');
-        opt.value = idx;
-        const timeStr = new Date(s.endTime || s.startTime).toLocaleString();
-        opt.textContent = `Session ${idx + 1} - ${timeStr} (${s.stats ? s.stats.totalDurationMin : 0}m)`;
+        const d = new Date(s.startTime);
+        const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+        const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const durMin = s.stats ? s.stats.totalDurationMin : Math.round(s.logs.length * 5 / 60);
+        const durStr = Math.floor(durMin / 60) > 0 ? `${Math.floor(durMin / 60)}h ${durMin % 60}m` : `${durMin}m`;
+        opt.textContent = `Session ${idx + 1} - ${dateStr}, ${timeStr} (${durStr})`;
         sessionHistorySelect.appendChild(opt);
       });
       sessionHistorySelect.value = completedSessionsStore.length - 1;
